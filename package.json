@@ -1,0 +1,11 @@
+{
+  "name": "exquisite-corpse",
+  "version": "0.2.0",
+  "description": "Multiplayer drawing game with accounts & favorites",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "stripe": "^14.0.0"
+  }
+}

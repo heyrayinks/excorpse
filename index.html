@@ -1,0 +1,1472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Exquisite Corpse</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; }
+        .layerCanvas {
+            touch-action: none;               /* stops scroll/pinch while drawing */
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-touch-callout: none;      /* no iOS long-press callout */
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        .fade-in { animation: fadeIn 0.8s ease-in forwards; opacity: 0; }
+        @keyframes fadeIn { to { opacity: 1; } }
+        .toolBtn.active, .layerBtn.active { background: #1f2937; color: white; }
+    </style>
+</head>
+<body>
+    <div id="app"></div>
+
+    <script>
+    // ================= STATE =================
+    const S = {
+        screen: 'home',        // home | lobby | draw | results | signup | login | account | checkoutPending
+        code: sessionStorage.getItem('ec_code') || null,
+        playerId: sessionStorage.getItem('ec_playerId') || null,
+        game: null,
+        pollTimer: null,
+        // drawing state
+        tool: 'pen',           // pen | eraser | fill
+        brushColor: '#000000',
+        brushSize: 4,
+        activeLayer: 1,        // 1 = line art (top, default), 0 = background/fill (bottom)
+        undoStacks: [[], []],  // per-layer dataURL snapshots (compressed, memory-friendly)
+        submittedThisRound: false,
+        lastRound: null,
+        inspWord: null,        // this round's inspiration word
+        inspRound: null,       // round the modal was auto-shown for
+        timerInterval: null,
+        error: null,
+        // account state
+        authToken: localStorage.getItem('ec_authToken') || null,
+        user: null,            // { id, email, username, avatarDataUrl, paid, favorites, favoritesCount }
+        authError: null,
+        returnToResults: false, // true if signup/login was triggered from the results screen
+    };
+
+    const app = document.getElementById('app');
+    const SECTION_LABELS = { head: 'Head', torso: 'Torso', legs: 'Legs' };
+    const SECTION_TIPS = {
+        head: 'Draw a head. Bring the neck lines down to the bottom edge so the next artist can connect.',
+        torso: 'Draw a torso. Start from the lines at the top edge and bring your lines down to the bottom edge.',
+        legs: 'Draw the legs. Start from the lines at the top edge. Finish strong!',
+    };
+
+    // Inspiration words — drawable nouns & evocative adjectives
+    const INSPIRATION_WORDS = [
+        // nouns
+        'robot', 'pirate', 'wizard', 'octopus', 'dragon', 'cactus', 'astronaut', 'vampire',
+        'jellyfish', 'viking', 'mermaid', 'dinosaur', 'clown', 'ninja', 'snail', 'owl',
+        'walrus', 'gnome', 'yeti', 'cyborg', 'samurai', 'scarecrow', 'ghost', 'alien',
+        'moose', 'flamingo', 'chicken', 'toad', 'spider', 'king', 'queen', 'jester',
+        'detective', 'chef', 'cowboy', 'zombie', 'angel', 'fairy', 'troll', 'goblin',
+        'knight', 'pharaoh', 'banana', 'mushroom', 'tornado', 'volcano', 'lighthouse',
+        'skeleton', 'werewolf', 'librarian', 'plumber', 'ballerina', 'lumberjack',
+        'sea monster', 'gargoyle', 'centaur', 'genie', 'peacock', 'porcupine', 'anglerfish',
+        // adjectives
+        'grumpy', 'fluffy', 'ancient', 'sleepy', 'electric', 'melting', 'giant', 'tiny',
+        'furious', 'elegant', 'sneaky', 'majestic', 'wobbly', 'spiky', 'slimy', 'glamorous',
+        'rusty', 'glowing', 'hairy', 'toothy', 'winged', 'armored', 'striped', 'polka-dotted',
+        'royal', 'spooky', 'cheerful', 'disco', 'steampunk', 'underwater', 'robotic',
+        'fiery', 'frozen', 'mossy', 'crystalline', 'noodly', 'inflatable', 'medieval',
+        'radioactive', 'fancy', 'crooked', 'bubbly', 'thorny', 'velvet', 'neon',
+    ];
+    function randomInspiration() {
+        return INSPIRATION_WORDS[Math.floor(Math.random() * INSPIRATION_WORDS.length)];
+    }
+
+    // Letter-paper proportions (8.5 x 11). Free tier DRAWS at 100 DPI (850x1100)
+    // — same live experience as always, no perf/UX change. Paid accounts draw
+    // natively at 300 DPI (2550x3300). Resolution is fixed at draw-time per
+    // player, based on whoever is holding the pen, not a post-hoc save-time boost.
+    //
+    // Every SUBMITTED section is normalized to OUTPUT_W x OUTPUT_H (the paid/300
+    // DPI size) regardless of who drew it, so every sheet is uniform for
+    // stitching/download/favorites — free drawings get upscaled into that frame
+    // (genuinely softer, since the underlying detail is still only 100 DPI), paid
+    // drawings already match natively.
+    const BASE_CANVAS_W = 850, BASE_CANVAS_H = 1100, BASE_EDGE_H = 40;
+    const PAID_RENDER_SCALE = 3; // 100 DPI -> 300 DPI
+    const OUTPUT_W = BASE_CANVAS_W * PAID_RENDER_SCALE;   // 2550 — universal stored/stitched size
+    const OUTPUT_H = BASE_CANVAS_H * PAID_RENDER_SCALE;   // 3300
+    const OUTPUT_EDGE_H = BASE_EDGE_H * PAID_RENDER_SCALE; // 120
+    const MAX_FAVORITES = 15;    // must match MAX_FAVORITES in data.js
+    let CANVAS_W = BASE_CANVAS_W, CANVAS_H = BASE_CANVAS_H, EDGE_H = BASE_EDGE_H;
+    let RENDER_SCALE = 1;
+
+    function applyRenderScale() {
+        RENDER_SCALE = (S.authToken && S.user && S.user.paid) ? PAID_RENDER_SCALE : 1;
+        CANVAS_W = BASE_CANVAS_W * RENDER_SCALE;
+        CANVAS_H = BASE_CANVAS_H * RENDER_SCALE;
+        EDGE_H = BASE_EDGE_H * RENDER_SCALE;
+        return RENDER_SCALE;
+    }
+
+    // ================= API =================
+    async function api(path, opts = {}) {
+        const res = await fetch('/api' + path, {
+            headers: { 'Content-Type': 'application/json' },
+            ...opts,
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Request failed');
+        return data;
+    }
+
+    // Same as api(), but attaches the Bearer auth token for account endpoints
+    async function authApi(path, opts = {}) {
+        const res = await fetch('/api' + path, {
+            headers: {
+                'Content-Type': 'application/json',
+                ...(S.authToken ? { Authorization: `Bearer ${S.authToken}` } : {}),
+            },
+            ...opts,
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Request failed');
+        return data;
+    }
+
+    function setAuthSession(token, user) {
+        S.authToken = token;
+        S.user = user;
+        localStorage.setItem('ec_authToken', token);
+    }
+
+    function clearAuthSession() {
+        S.authToken = null;
+        S.user = null;
+        localStorage.removeItem('ec_authToken');
+    }
+
+    async function refreshMe() {
+        if (!S.authToken) return null;
+        try {
+            const { user } = await authApi('/account/me');
+            S.user = user;
+            return user;
+        } catch (e) {
+            // Token invalid/expired — log out silently
+            clearAuthSession();
+            return null;
+        }
+    }
+
+    async function createGame(mode, timePerTurn, maxPlayers) {
+        const { code } = await api('/games', { method: 'POST', body: JSON.stringify({ mode, timePerTurn, maxPlayers }) });
+        S.code = code;
+        sessionStorage.setItem('ec_code', code);
+        return code;
+    }
+
+    async function joinGame(code, name) {
+        const data = await api(`/games/${code}/join`, { method: 'POST', body: JSON.stringify({ name }) });
+        S.code = code.toUpperCase();
+        S.playerId = data.playerId;
+        S.game = data;
+        sessionStorage.setItem('ec_code', S.code);
+        sessionStorage.setItem('ec_playerId', S.playerId);
+    }
+
+    async function pollState() {
+        if (!S.code) return;
+        try {
+            const data = await api(`/games/${S.code}?playerId=${S.playerId || ''}`);
+            const prev = S.game;
+            S.game = data;
+            onStateUpdate(prev, data);
+        } catch (e) {
+            if (e.message === 'Game not found') {
+                stopPolling();
+                clearSession();
+                S.screen = 'home';
+                S.error = 'That game no longer exists.';
+                render();
+            }
+        }
+    }
+
+    function startPolling() {
+        stopPolling();
+        S.pollTimer = setInterval(pollState, 2000);
+    }
+    function stopPolling() {
+        if (S.pollTimer) clearInterval(S.pollTimer);
+        S.pollTimer = null;
+    }
+    function clearSession() {
+        S.code = null; S.playerId = null; S.game = null;
+        sessionStorage.removeItem('ec_code');
+        sessionStorage.removeItem('ec_playerId');
+    }
+
+    function onStateUpdate(prev, cur) {
+        if (cur.status === 'waiting') {
+            if (S.screen !== 'lobby') { S.screen = 'lobby'; render(); }
+            else updateLobby(cur);
+        } else if (cur.status === 'active') {
+            const roundChanged = S.lastRound !== cur.round;
+            if (roundChanged) {
+                S.lastRound = cur.round;
+                S.submittedThisRound = cur.you ? cur.you.submitted : false;
+                S.screen = 'draw';
+                render();
+            } else if (S.screen !== 'draw') {
+                S.screen = 'draw';
+                S.submittedThisRound = cur.you ? cur.you.submitted : false;
+                render();
+            } else {
+                updateWaitingStatus(cur);
+            }
+        } else if (cur.status === 'completed') {
+            if (S.screen !== 'results') { S.screen = 'results'; stopPolling(); render(); }
+        }
+    }
+
+    // ================= RENDER =================
+    function render() {
+        if (S.timerInterval) { clearInterval(S.timerInterval); S.timerInterval = null; }
+        window.onresize = null;
+        if (S.screen === 'home') renderHome();
+        else if (S.screen === 'lobby') renderLobby();
+        else if (S.screen === 'draw') renderDraw();
+        else if (S.screen === 'results') renderResults();
+        else if (S.screen === 'signup') renderSignup();
+        else if (S.screen === 'login') renderLogin();
+        else if (S.screen === 'account') renderAccount();
+        else if (S.screen === 'checkoutPending') renderCheckoutPending();
+    }
+
+    // ---------- HOME ----------
+    function renderHome() {
+        const urlCode = new URLSearchParams(location.search).get('code') || '';
+        app.innerHTML = `
+        <div class="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-blue-500 p-4 flex items-center justify-center">
+            <div class="w-full max-w-md">
+                <div class="flex justify-end mb-2 px-1">
+                    ${S.authToken && S.user ? `
+                        <button id="accountLink" class="flex items-center gap-2 px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-full text-white text-sm font-semibold">
+                            ${S.user.avatarDataUrl
+                                ? `<img src="${S.user.avatarDataUrl}" class="w-6 h-6 rounded-full object-cover">`
+                                : `<span class="w-6 h-6 rounded-full bg-white/30 flex items-center justify-center text-xs">${S.user.username.slice(0, 1).toUpperCase()}</span>`}
+                            ${S.user.username}
+                        </button>
+                    ` : `
+                        <div class="flex gap-2">
+                            <button id="loginLink" class="px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-full text-white text-sm font-semibold">Log in</button>
+                            <button id="signupLink" class="px-3 py-1.5 bg-white text-purple-700 rounded-full text-sm font-semibold">✨ Sign up</button>
+                        </div>
+                    `}
+                </div>
+                <div class="bg-white rounded-2xl shadow-2xl p-8">
+                    <div class="text-center mb-6">
+                        <h1 class="text-4xl font-bold text-gray-900 mb-2">🎨 Exquisite Corpse</h1>
+                        <p class="text-gray-600">2-10 artists. A creature each. Zero spoilers.</p>
+                    </div>
+
+                    ${S.error ? `<div class="mb-4 p-3 bg-red-50 border border-red-300 text-red-700 rounded-lg text-sm">${S.error}</div>` : ''}
+
+                    <div class="mb-6 p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                        <p class="text-sm text-gray-700">
+                            Everyone draws at once! Round 1: everyone draws a <b>head</b>.
+                            Then sheets rotate — draw a <b>torso</b> on someone else's sheet (you only see the edge!),
+                            then <b>legs</b>. At the end: one gloriously weird creature per artist.
+                        </p>
+                    </div>
+
+                    <!-- JOIN -->
+                    <div class="mb-6 p-4 border-2 border-green-200 bg-green-50 rounded-xl">
+                        <h3 class="font-semibold text-gray-900 mb-2">Join a game</h3>
+                        <div class="flex gap-2">
+                            <input id="joinCode" type="text" maxlength="6" placeholder="CODE" value="${urlCode}"
+                                class="w-28 px-3 py-2 border-2 border-gray-300 rounded-lg font-mono uppercase text-center focus:outline-none focus:border-green-500">
+                            <input id="joinName" type="text" maxlength="30" placeholder="Your name"
+                                class="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-green-500">
+                            <button id="joinBtn" class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg">Join</button>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-3 mb-6">
+                        <div class="flex-1 border-t border-gray-200"></div>
+                        <span class="text-gray-400 text-sm">or start a new one</span>
+                        <div class="flex-1 border-t border-gray-200"></div>
+                    </div>
+
+                    <!-- CREATE -->
+                    <div class="mb-4">
+                        <input id="createName" type="text" maxlength="30" placeholder="Your name"
+                            class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500 mb-3">
+
+                        <div class="mb-3">
+                            <label class="block text-xs font-medium text-gray-500 mb-1">Number of artists: <b><span id="playerCountValue">3</span></b></label>
+                            <input id="playerCountSlider" type="range" min="2" max="10" value="3" class="w-full">
+                            <p id="playerCountHint" class="text-xs text-gray-500 mt-1.5">Everyone draws every round — more artists means more creatures, not a longer game.</p>
+                        </div>
+
+                        <div class="space-y-2 mb-3">
+                            <label class="flex items-center p-3 border-2 rounded-lg cursor-pointer" id="modeAsyncLabel" style="border-color:#8b5cf6;background:#f5f3ff">
+                                <input type="radio" name="mode" value="async" checked class="w-4 h-4">
+                                <div class="ml-3">
+                                    <p class="font-semibold text-gray-900 text-sm">Relaxed</p>
+                                    <p class="text-xs text-gray-600">No time limit per round.</p>
+                                </div>
+                            </label>
+                            <label class="flex items-center p-3 border-2 border-gray-200 rounded-lg cursor-pointer" id="modeTimedLabel">
+                                <input type="radio" name="mode" value="timed" class="w-4 h-4">
+                                <div class="ml-3">
+                                    <p class="font-semibold text-gray-900 text-sm">Timed</p>
+                                    <p class="text-xs text-gray-600">Race the clock each round.</p>
+                                </div>
+                            </label>
+                        </div>
+                        <div id="timerOption" class="hidden mb-3 p-3 bg-orange-50 rounded-lg border-l-4 border-orange-400">
+                            <label class="block text-sm text-gray-700 mb-1">Time per round: <b><span id="timerValue">3</span> min</b></label>
+                            <input id="timerSlider" type="range" min="1" max="10" value="3" class="w-full">
+                        </div>
+                        <button id="createBtn" class="w-full px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-bold rounded-xl text-lg transition">
+                            🎮 Create Game
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+
+        S.error = null;
+
+        if (S.authToken && S.user) {
+            document.getElementById('accountLink').addEventListener('click', () => {
+                S.screen = 'account';
+                render();
+            });
+        } else {
+            document.getElementById('loginLink').addEventListener('click', () => {
+                S.screen = 'login';
+                render();
+            });
+            document.getElementById('signupLink').addEventListener('click', () => {
+                S.screen = 'signup';
+                render();
+            });
+        }
+
+        document.querySelectorAll('input[name="mode"]').forEach(r => {
+            r.addEventListener('change', e => {
+                document.getElementById('timerOption').classList.toggle('hidden', e.target.value !== 'timed');
+                document.getElementById('modeAsyncLabel').style.cssText = e.target.value === 'async' ? 'border-color:#8b5cf6;background:#f5f3ff' : '';
+                document.getElementById('modeTimedLabel').style.cssText = e.target.value === 'timed' ? 'border-color:#8b5cf6;background:#f5f3ff' : '';
+            });
+        });
+        document.getElementById('playerCountSlider').addEventListener('input', e => {
+            const n = e.target.value;
+            document.getElementById('playerCountValue').textContent = n;
+            document.getElementById('playerCountHint').textContent = n === '2'
+                ? 'With 2 players, your sheets simply swap back and forth each round.'
+                : 'Everyone draws every round — more artists means more creatures, not a longer game.';
+        });
+        document.getElementById('timerSlider').addEventListener('input', e => {
+            document.getElementById('timerValue').textContent = e.target.value;
+        });
+
+        document.getElementById('createBtn').addEventListener('click', async () => {
+            const name = document.getElementById('createName').value.trim();
+            if (!name) return showHomeError('Enter your name to create a game.');
+            const mode = document.querySelector('input[name="mode"]:checked').value;
+            const timePerTurn = parseInt(document.getElementById('timerSlider').value);
+            const maxPlayers = Number(document.getElementById('playerCountSlider').value);
+            try {
+                const code = await createGame(mode, timePerTurn, maxPlayers);
+                await joinGame(code, name);
+                S.screen = 'lobby';
+                render();
+                startPolling();
+            } catch (e) { showHomeError(e.message); }
+        });
+
+        document.getElementById('joinBtn').addEventListener('click', doJoin);
+        document.getElementById('joinName').addEventListener('keypress', e => { if (e.key === 'Enter') doJoin(); });
+
+        async function doJoin() {
+            const code = document.getElementById('joinCode').value.trim().toUpperCase();
+            const name = document.getElementById('joinName').value.trim();
+            if (code.length !== 6) return showHomeError('Game codes are 6 characters.');
+            if (!name) return showHomeError('Enter your name to join.');
+            try {
+                await joinGame(code, name);
+                S.screen = 'lobby';
+                render();
+                startPolling();
+            } catch (e) { showHomeError(e.message); }
+        }
+
+        function showHomeError(msg) { S.error = msg; renderHome(); }
+    }
+
+    // ---------- LOBBY ----------
+    function renderLobby() {
+        const g = S.game || { players: [], code: S.code, mode: 'async', maxPlayers: 3 };
+        app.innerHTML = `
+        <div class="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 p-4 flex items-center justify-center">
+            <div class="w-full max-w-xl">
+                <div class="bg-white rounded-2xl shadow-lg p-8">
+                    <h1 class="text-3xl font-bold mb-1">Waiting Room</h1>
+                    <p class="text-gray-500 mb-6">The game begins when ${g.maxPlayers} artist${g.maxPlayers > 1 ? 's have' : ' has'} joined.</p>
+
+                    <div class="mb-6 p-5 bg-blue-50 rounded-xl border-2 border-blue-200 text-center">
+                        <p class="text-sm text-gray-600 mb-1">Game Code</p>
+                        <p class="text-4xl font-mono font-bold text-blue-600 tracking-widest mb-3">${g.code}</p>
+                        <div class="flex gap-2 justify-center">
+                            <button id="copyCodeBtn" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg">📋 Copy code</button>
+                            <button id="copyLinkBtn" class="px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 text-sm font-semibold rounded-lg">🔗 Copy invite link</button>
+                        </div>
+                    </div>
+
+                    <div id="playerList" class="space-y-3 mb-6"></div>
+
+                    <div id="lobbyActions"></div>
+                </div>
+            </div>
+        </div>`;
+
+        document.getElementById('copyCodeBtn').addEventListener('click', () => {
+            navigator.clipboard.writeText(g.code);
+        });
+        document.getElementById('copyLinkBtn').addEventListener('click', () => {
+            navigator.clipboard.writeText(`${location.origin}/?code=${g.code}`);
+        });
+
+        updateLobby(g);
+    }
+
+    function updateLobby(g) {
+        const list = document.getElementById('playerList');
+        const actions = document.getElementById('lobbyActions');
+        if (!list || !actions) return;
+
+        list.innerHTML = Array.from({ length: g.maxPlayers }, (_, i) => i).map(i => {
+            const p = g.players[i];
+            const isYou = p && g.you && p.order === g.you.order;
+            return `
+            <div class="p-4 rounded-xl border-2 ${p ? 'bg-green-50 border-green-300' : 'bg-gray-50 border-dashed border-gray-300'}">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <span class="text-2xl">${p ? '🧑‍🎨' : '💤'}</span>
+                        <p class="font-semibold ${p ? '' : 'text-gray-400'}">${p ? p.name : 'Waiting for artist...'}</p>
+                    </div>
+                    ${isYou ? '<span class="text-xs font-bold text-blue-600 bg-blue-100 px-2 py-1 rounded-full">YOU</span>' : ''}
+                </div>
+            </div>`;
+        }).join('');
+
+        const isCreator = g.you && g.you.order === 1;
+        const isFull = g.players.length === g.maxPlayers;
+        if (isFull && isCreator) {
+            actions.innerHTML = `<button id="startBtn" class="w-full px-6 py-4 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl text-lg">🚀 Start Game</button>`;
+            document.getElementById('startBtn').addEventListener('click', async () => {
+                try {
+                    await api(`/games/${S.code}/start`, { method: 'POST', body: JSON.stringify({ playerId: S.playerId }) });
+                    pollState();
+                } catch (e) { alert(e.message); }
+            });
+        } else if (isFull) {
+            actions.innerHTML = `<p class="text-center text-gray-500">Everyone's here! Waiting for <b>${g.players[0].name}</b> to start...</p>`;
+        } else {
+            const remaining = g.maxPlayers - g.players.length;
+            actions.innerHTML = `<p class="text-center text-gray-500">Waiting for ${remaining} more artist${remaining === 1 ? '' : 's'}... share the code!</p>`;
+        }
+    }
+
+    // ---------- DRAW ----------
+    function renderDraw() {
+        const g = S.game;
+        const section = g.section;
+        const submitted = S.submittedThisRound;
+
+        if (submitted) { renderWaiting(); return; }
+
+        applyRenderScale(); // sets CANVAS_W/H/EDGE_H based on whether THIS player is paid
+
+        // Fresh inspiration word each round; modal auto-opens once per round
+        const showInspModal = S.inspRound !== g.round;
+        if (showInspModal) {
+            S.inspWord = randomInspiration();
+            S.inspRound = g.round;
+        }
+
+        app.innerHTML = `
+        <div class="min-h-screen bg-gray-100 flex flex-col" style="height:100vh; overflow:hidden">
+            <!-- Top bar -->
+            <div class="flex items-center justify-between px-4 py-2 bg-white shadow-sm shrink-0">
+                <div class="flex items-center gap-3">
+                    <span class="font-bold text-lg">Round ${g.round}/3: ${SECTION_LABELS[section]}</span>
+                    <button id="inspChip" class="px-2.5 py-1 bg-yellow-50 hover:bg-yellow-100 border border-yellow-300 text-yellow-800 text-sm font-semibold rounded-full" title="Show inspiration">
+                        💡 <span id="inspChipWord" class="capitalize">${S.inspWord}</span>
+                    </button>
+                    <span class="hidden lg:inline text-gray-500 text-sm">${SECTION_TIPS[section]}</span>
+                </div>
+                <div class="flex items-center gap-4">
+                    <span id="timerBadge" class="text-lg font-mono font-bold text-gray-700"></span>
+                    <button id="submitBtn" class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg">✓ Done</button>
+                </div>
+            </div>
+
+            <!-- Inspiration modal -->
+            <div id="inspModal" class="${showInspModal ? '' : 'hidden'} fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                <div class="bg-white rounded-2xl p-8 max-w-sm w-full text-center shadow-2xl">
+                    <div class="text-5xl mb-3">💡</div>
+                    <p class="text-gray-500 mb-1">Need inspiration? Try:</p>
+                    <p id="inspWordEl" class="text-4xl font-bold text-purple-700 capitalize mb-6">${S.inspWord}</p>
+                    <div class="flex gap-3">
+                        <button id="inspReroll" class="flex-1 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl">🎲 Another</button>
+                        <button id="inspClose" class="flex-1 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl">Let's draw!</button>
+                    </div>
+                    <p class="mt-4 text-xs text-gray-400">Just a nudge — draw whatever you like.</p>
+                </div>
+            </div>
+
+            <!-- Toolbar -->
+            <div class="flex items-center gap-3 px-4 py-2 bg-white border-t border-gray-100 shadow-sm shrink-0 flex-wrap">
+                <div class="flex gap-1">
+                    <button id="toolPen" class="toolBtn active px-3 py-1.5 rounded-lg border border-gray-300 text-sm font-semibold" title="Pen">✏️ Pen</button>
+                    <button id="toolEraser" class="toolBtn px-3 py-1.5 rounded-lg border border-gray-300 text-sm font-semibold" title="Eraser">🧽 Eraser</button>
+                    <button id="toolFill" class="toolBtn px-3 py-1.5 rounded-lg border border-gray-300 text-sm font-semibold" title="Fill enclosed areas">🪣 Fill</button>
+                </div>
+                <div class="h-6 border-l border-gray-300"></div>
+                <div class="flex items-center gap-1.5">
+                    <span class="text-xs text-gray-500 mr-0.5">Layer</span>
+                    <button id="layerBtn1" data-layer="1" class="layerBtn active px-2.5 py-1.5 rounded-lg border border-gray-300 text-sm font-semibold" title="Line art layer (top)">1</button>
+                    <button id="layerBtn0" data-layer="0" class="layerBtn px-2.5 py-1.5 rounded-lg border border-gray-300 text-sm font-semibold" title="Background layer (bottom)">2</button>
+                </div>
+                <div class="h-6 border-l border-gray-300"></div>
+                <div class="flex items-center gap-1.5" id="colorRow">
+                    ${['#000000', '#e11d48', '#f97316', '#facc15', '#16a34a', '#2563eb', '#9333ea', '#f9a8d4', '#78350f', '#9ca3af'].map(c => `
+                        <button data-color="${c}" class="colorBtn w-7 h-7 rounded-full border-2 ${c === S.brushColor ? 'border-gray-900 scale-110' : 'border-gray-200'}" style="background:${c}"></button>
+                    `).join('')}
+                    <label class="relative w-7 h-7 rounded-full border-2 border-gray-300 overflow-hidden cursor-pointer ml-1" title="Custom color"
+                        style="background:conic-gradient(red,yellow,lime,cyan,blue,magenta,red)">
+                        <input id="customColor" type="color" value="${S.brushColor}" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full">
+                    </label>
+                </div>
+                <div class="h-6 border-l border-gray-300"></div>
+                <div class="flex items-center gap-2">
+                    <span class="text-xs text-gray-500">Size</span>
+                    <input id="sizeSlider" type="range" min="1" max="40" value="${S.brushSize}" class="w-24">
+                    <span id="sizeLabel" class="text-xs text-gray-500 w-5">${S.brushSize}</span>
+                </div>
+                <div class="h-6 border-l border-gray-300"></div>
+                <button id="undoBtn" class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold rounded-lg">↶ Undo</button>
+                <button id="clearBtn" class="px-3 py-1.5 bg-orange-100 hover:bg-orange-200 text-orange-700 text-sm font-semibold rounded-lg">Clear</button>
+                <div id="roundStatus" class="ml-auto flex gap-2"></div>
+            </div>
+
+            <!-- Paper -->
+            <div class="flex-1 flex items-center justify-center overflow-hidden p-2" id="paperArea">
+                <div id="paperWrap" class="shadow-xl" style="width:fit-content">
+                    ${g.edgeHint ? `
+                        <div class="relative">
+                            <img id="edgeHintImg" src="${g.edgeHint}" class="block border-2 border-b-0 border-amber-400" style="width:100%">
+                            <span class="absolute right-1 top-0.5 text-[10px] font-bold text-amber-700 bg-amber-100/90 px-1 rounded">CONNECT HERE ↓</span>
+                        </div>` : ''}
+                    <div id="canvasStack" class="relative bg-white border-2 ${g.edgeHint ? 'border-amber-400 border-t-amber-200' : 'border-gray-300'}">
+                        <canvas id="layerCanvas0" width="${CANVAS_W}" height="${CANVAS_H}" class="layerCanvas block" style="z-index:1"></canvas>
+                        <canvas id="layerCanvas1" width="${CANVAS_W}" height="${CANVAS_H}" class="layerCanvas block" style="z-index:2; cursor:crosshair"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+
+        setupCanvas();
+        setupTimer();
+        updateWaitingStatus(g);
+
+        // Inspiration modal wiring
+        const inspModal = document.getElementById('inspModal');
+        document.getElementById('inspReroll').addEventListener('click', () => {
+            S.inspWord = randomInspiration();
+            document.getElementById('inspWordEl').textContent = S.inspWord;
+            document.getElementById('inspChipWord').textContent = S.inspWord;
+        });
+        document.getElementById('inspClose').addEventListener('click', () => {
+            inspModal.classList.add('hidden');
+        });
+        inspModal.addEventListener('click', e => {
+            if (e.target === inspModal) inspModal.classList.add('hidden');
+        });
+        document.getElementById('inspChip').addEventListener('click', () => {
+            inspModal.classList.remove('hidden');
+        });
+    }
+
+    function fitPaper() {
+        const stack = document.getElementById('canvasStack');
+        const hint = document.getElementById('edgeHintImg');
+        const area = document.getElementById('paperArea');
+        if (!stack || !area) return;
+
+        const hintH = hint ? EDGE_H : 0;
+        const totalH = CANVAS_H + hintH;
+        const availW = area.clientWidth - 16;
+        const availH = area.clientHeight - 16;
+        const scale = Math.min(availW / CANVAS_W, availH / totalH);
+
+        const w = (CANVAS_W * scale) + 'px';
+        const h = (CANVAS_H * scale) + 'px';
+        stack.style.width = w;
+        stack.style.height = h;
+        document.querySelectorAll('.layerCanvas').forEach(c => {
+            c.style.width = w;
+            c.style.height = h;
+        });
+        if (hint) {
+            hint.style.width = w;
+            hint.style.height = (EDGE_H * scale) + 'px';
+        }
+    }
+
+    // Two layers: 0 = background/fill (bottom), 1 = line art (top, default active).
+    // Both canvases start transparent — the white "paper" comes from #canvasStack's
+    // own background, so erasing on either layer just reveals the paper beneath.
+    function setupCanvas() {
+        const canvases = [document.getElementById('layerCanvas0'), document.getElementById('layerCanvas1')];
+        const ctxs = canvases.map(c => c.getContext('2d', { willReadFrequently: true }));
+        ctxs.forEach(ctx => { ctx.lineCap = 'round'; ctx.lineJoin = 'round'; });
+        S.undoStacks = [[], []];
+
+        const topCanvas = canvases[1]; // always receives pointer events, regardless of active layer
+
+        fitPaper();
+        requestAnimationFrame(fitPaper); // re-fit after first layout settles
+        window.onresize = fitPaper;
+
+        let activePointer = null;   // only one finger/pen draws at a time
+        let penSeen = false;        // once a stylus is used, ignore finger touches (palm rejection)
+        let last = null;            // previous point for segment drawing
+
+        function pos(e) {
+            const rect = topCanvas.getBoundingClientRect();
+            return {
+                x: (e.clientX - rect.left) * (CANVAS_W / rect.width),
+                y: (e.clientY - rect.top) * (CANVAS_H / rect.height),
+            };
+        }
+
+        // Pressure-aware width: Apple Pencil / stylus varies 0..1, mouse & touch report 0.5
+        function widthFor(e) {
+            // Multiply by RENDER_SCALE so a given brush size looks the same
+            // physical thickness on the page regardless of underlying resolution
+            const base = (S.tool === 'eraser' ? S.brushSize * 2 : S.brushSize) * RENDER_SCALE;
+            if (e.pointerType === 'pen' && e.pressure > 0) {
+                return Math.max(0.5, base * (0.3 + e.pressure * 1.4));
+            }
+            return base;
+        }
+
+        function drawSegment(from, to, width) {
+            const ctx = ctxs[S.activeLayer];
+            ctx.globalCompositeOperation = S.tool === 'eraser' ? 'destination-out' : 'source-over';
+            ctx.strokeStyle = S.brushColor;
+            ctx.lineWidth = width;
+            ctx.beginPath();
+            ctx.moveTo(from.x, from.y);
+            ctx.lineTo(to.x, to.y);
+            ctx.stroke();
+        }
+
+        // Undo snapshots stored as PNG data URLs (~50-200KB each vs 3.7MB raw)
+        function pushUndo() {
+            const layer = S.activeLayer;
+            S.undoStacks[layer].push(canvases[layer].toDataURL('image/png'));
+            if (S.undoStacks[layer].length > 20) S.undoStacks[layer].shift();
+        }
+
+        topCanvas.addEventListener('pointerdown', e => {
+            e.preventDefault();
+
+            // Palm rejection: once a pen has been seen, finger touches don't draw
+            if (e.pointerType === 'pen') penSeen = true;
+            else if (e.pointerType === 'touch' && penSeen) return;
+
+            // Ignore extra simultaneous pointers (second finger, resting palm)
+            if (activePointer !== null) return;
+
+            const p = pos(e);
+
+            if (S.tool === 'fill') {
+                pushUndo();
+                floodFill(ctxs[S.activeLayer], Math.round(p.x), Math.round(p.y), S.brushColor);
+                return;
+            }
+
+            pushUndo();
+            activePointer = e.pointerId;
+            topCanvas.setPointerCapture(e.pointerId);
+            last = p;
+            drawSegment(p, { x: p.x + 0.01, y: p.y + 0.01 }, widthFor(e)); // dot on tap
+        });
+
+        topCanvas.addEventListener('pointermove', e => {
+            if (e.pointerId !== activePointer) return;
+            e.preventDefault();
+
+            // Coalesced events: Apple Pencil samples at 240Hz — much smoother curves
+            const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+            for (const ev of events) {
+                const p = pos(ev);
+                drawSegment(last, p, widthFor(ev));
+                last = p;
+            }
+        });
+
+        const stop = e => {
+            if (e.pointerId === activePointer) {
+                activePointer = null;
+                last = null;
+            }
+        };
+        topCanvas.addEventListener('pointerup', stop);
+        topCanvas.addEventListener('pointercancel', stop);
+        topCanvas.addEventListener('contextmenu', e => e.preventDefault()); // no long-press menu on tablets
+
+        // Tool buttons
+        const toolBtns = { pen: 'toolPen', eraser: 'toolEraser', fill: 'toolFill' };
+        Object.entries(toolBtns).forEach(([tool, id]) => {
+            document.getElementById(id).addEventListener('click', () => {
+                S.tool = tool;
+                Object.entries(toolBtns).forEach(([t, i]) => {
+                    document.getElementById(i).classList.toggle('active', t === tool);
+                });
+                topCanvas.style.cursor = tool === 'fill' ? 'cell' : 'crosshair';
+            });
+        });
+
+        // Layer buttons
+        document.querySelectorAll('.layerBtn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                S.activeLayer = Number(btn.dataset.layer);
+                document.querySelectorAll('.layerBtn').forEach(b => {
+                    b.classList.toggle('active', b === btn);
+                });
+            });
+        });
+
+        // Colors
+        function selectColor(color) {
+            S.brushColor = color;
+            document.querySelectorAll('.colorBtn').forEach(b => {
+                b.className = `colorBtn w-7 h-7 rounded-full border-2 ${b.dataset.color === color ? 'border-gray-900 scale-110' : 'border-gray-200'}`;
+            });
+            // Picking a color switches off the eraser (common expectation)
+            if (S.tool === 'eraser') document.getElementById('toolPen').click();
+        }
+        document.querySelectorAll('.colorBtn').forEach(btn => {
+            btn.addEventListener('click', () => selectColor(btn.dataset.color));
+        });
+        document.getElementById('customColor').addEventListener('input', e => selectColor(e.target.value));
+
+        document.getElementById('sizeSlider').addEventListener('input', e => {
+            S.brushSize = Number(e.target.value);
+            document.getElementById('sizeLabel').textContent = e.target.value;
+        });
+
+        document.getElementById('undoBtn').addEventListener('click', () => {
+            const layer = S.activeLayer;
+            const snap = S.undoStacks[layer].pop();
+            if (!snap) return;
+            const ctx = ctxs[layer];
+            const img = new Image();
+            img.onload = () => {
+                ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.drawImage(img, 0, 0);
+            };
+            img.src = snap;
+        });
+        document.getElementById('clearBtn').addEventListener('click', () => {
+            pushUndo();
+            ctxs[S.activeLayer].clearRect(0, 0, CANVAS_W, CANVAS_H);
+        });
+        document.getElementById('submitBtn').addEventListener('click', submitDrawing);
+    }
+
+    // Scanline-free BFS flood fill with tolerance (handles antialiased stroke edges).
+    // Matches on RGBA (alpha included) so it respects transparent regions as boundaries too.
+    function floodFill(ctx, startX, startY, hexColor) {
+        const W = CANVAS_W, H = CANVAS_H;
+        if (startX < 0 || startY < 0 || startX >= W || startY >= H) return;
+
+        const img = ctx.getImageData(0, 0, W, H);
+        const d = img.data;
+
+        const fr = parseInt(hexColor.slice(1, 3), 16);
+        const fg = parseInt(hexColor.slice(3, 5), 16);
+        const fb = parseInt(hexColor.slice(5, 7), 16);
+
+        const si = (startY * W + startX) * 4;
+        const tr = d[si], tg = d[si + 1], tb = d[si + 2], ta = d[si + 3];
+
+        // Clicked a pixel that's already the fill color — nothing to do
+        if (tr === fr && tg === fg && tb === fb && ta === 255) return;
+
+        const TOL = 32;
+        function matches(i) {
+            return Math.abs(d[i] - tr) <= TOL &&
+                   Math.abs(d[i + 1] - tg) <= TOL &&
+                   Math.abs(d[i + 2] - tb) <= TOL &&
+                   Math.abs(d[i + 3] - ta) <= TOL;
+        }
+
+        const visited = new Uint8Array(W * H);
+        const stack = [startX + startY * W];
+        visited[startX + startY * W] = 1;
+
+        while (stack.length) {
+            const p = stack.pop();
+            const x = p % W, y = (p / W) | 0;
+            const i = p * 4;
+            d[i] = fr; d[i + 1] = fg; d[i + 2] = fb; d[i + 3] = 255;
+
+            if (x > 0 && !visited[p - 1] && matches(i - 4)) { visited[p - 1] = 1; stack.push(p - 1); }
+            if (x < W - 1 && !visited[p + 1] && matches(i + 4)) { visited[p + 1] = 1; stack.push(p + 1); }
+            if (y > 0 && !visited[p - W] && matches(i - W * 4)) { visited[p - W] = 1; stack.push(p - W); }
+            if (y < H - 1 && !visited[p + W] && matches(i + W * 4)) { visited[p + W] = 1; stack.push(p + W); }
+        }
+
+        ctx.putImageData(img, 0, 0);
+    }
+
+    function setupTimer() {
+        const g = S.game;
+        const badge = document.getElementById('timerBadge');
+        if (!badge || g.mode !== 'timed' || !g.roundStartedAt) return;
+
+        const deadline = g.roundStartedAt + g.timePerTurn * 60 * 1000;
+        function tick() {
+            const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+            const m = Math.floor(remaining / 60), s = remaining % 60;
+            badge.textContent = `⏱ ${m}:${String(s).padStart(2, '0')}`;
+            badge.className = `text-lg font-mono font-bold ${remaining <= 30 ? 'text-red-600' : 'text-gray-700'}`;
+            if (remaining <= 0) {
+                clearInterval(S.timerInterval);
+                S.timerInterval = null;
+                if (!S.submittedThisRound) submitDrawing();
+            }
+        }
+        tick();
+        S.timerInterval = setInterval(tick, 500);
+    }
+
+    // Flattens both layers onto an opaque white background — the server only
+    // ever sees one composited image per turn, same as before layers existed.
+    function flattenLayers() {
+        const flat = document.createElement('canvas');
+        flat.width = CANVAS_W;
+        flat.height = CANVAS_H;
+        const ctx = flat.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+        ctx.drawImage(document.getElementById('layerCanvas0'), 0, 0);
+        ctx.drawImage(document.getElementById('layerCanvas1'), 0, 0);
+        return flat;
+    }
+
+    // Every submission is normalized to the universal OUTPUT_W x OUTPUT_H size,
+    // regardless of the drawing resolution. Paid canvases already match (no-op);
+    // free canvases get upscaled into that same frame (softer, but uniform size).
+    function normalizeToOutputSize(sourceCanvas) {
+        if (sourceCanvas.width === OUTPUT_W && sourceCanvas.height === OUTPUT_H) return sourceCanvas;
+        const out = document.createElement('canvas');
+        out.width = OUTPUT_W;
+        out.height = OUTPUT_H;
+        out.getContext('2d').drawImage(sourceCanvas, 0, 0, OUTPUT_W, OUTPUT_H);
+        return out;
+    }
+
+    async function submitDrawing() {
+        const canvas = document.getElementById('layerCanvas1');
+        if (!canvas || S.submittedThisRound) return;
+        S.submittedThisRound = true;
+
+        const flat = flattenLayers();
+        const normalized = normalizeToOutputSize(flat);
+        const image = normalized.toDataURL('image/png');
+
+        const strip = document.createElement('canvas');
+        strip.width = OUTPUT_W;
+        strip.height = OUTPUT_EDGE_H;
+        strip.getContext('2d').drawImage(normalized, 0, OUTPUT_H - OUTPUT_EDGE_H, OUTPUT_W, OUTPUT_EDGE_H, 0, 0, OUTPUT_W, OUTPUT_EDGE_H);
+        const edgeStrip = strip.toDataURL('image/png');
+
+        try {
+            const data = await api(`/games/${S.code}/submit`, {
+                method: 'POST',
+                body: JSON.stringify({ playerId: S.playerId, image, edgeStrip, inspWord: S.inspWord }),
+            });
+            S.game = data;
+            if (data.status === 'completed') {
+                S.screen = 'results';
+                stopPolling();
+            }
+            render();
+        } catch (e) {
+            S.submittedThisRound = false;
+            alert('Submit failed: ' + e.message);
+        }
+    }
+
+    function renderWaiting() {
+        const g = S.game;
+        app.innerHTML = `
+        <div class="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 p-4 flex items-center justify-center">
+            <div class="w-full max-w-md">
+                <div class="bg-white rounded-2xl shadow-lg p-8 text-center">
+                    <div class="text-5xl mb-4 animate-bounce">🎨</div>
+                    <h2 class="text-2xl font-bold mb-2">Nice ${SECTION_LABELS[g.section] ? SECTION_LABELS[g.section].toLowerCase() : 'work'}!</h2>
+                    <p class="text-gray-600 mb-6">Waiting for the other artists to finish round ${g.round}...</p>
+                    <div id="roundStatus" class="space-y-2"></div>
+                </div>
+            </div>
+        </div>`;
+        updateWaitingStatus(g);
+    }
+
+    function updateWaitingStatus(g) {
+        const el = document.getElementById('roundStatus');
+        if (!el || !g.players) return;
+
+        // Compact chips in the draw-screen toolbar; stacked rows on the waiting screen
+        if (S.screen === 'draw' && !S.submittedThisRound) {
+            el.innerHTML = g.players.map(p => `
+                <span class="text-xs px-2 py-1 rounded-full ${p.submitted ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}"
+                    title="${p.name}">${p.name.slice(0, 8)}${p.submitted ? ' ✓' : ' ✏️'}</span>
+            `).join('');
+        } else {
+            el.innerHTML = g.players.map(p => `
+                <div class="flex items-center justify-between px-4 py-2 rounded-lg ${p.submitted ? 'bg-green-50' : 'bg-gray-50'}">
+                    <span class="text-sm font-medium">${p.name}${g.you && p.order === g.you.order ? ' (you)' : ''}</span>
+                    <span class="text-sm">${p.submitted ? '✅ done' : '✏️ drawing...'}</span>
+                </div>
+            `).join('');
+        }
+    }
+
+    // ---------- RESULTS ----------
+    function renderResults() {
+        const g = S.game;
+        const sheets = g.sheets || [];
+        // 2-3 sheets keep their original tight layout; larger parties get a
+        // wider, more columnar grid so the reveal wall stays scannable
+        const gridCols = sheets.length === 2 ? 'md:grid-cols-2'
+            : sheets.length === 3 ? 'md:grid-cols-3'
+            : 'sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4';
+        const gridMaxW = sheets.length <= 3 ? 'max-w-3xl' : 'max-w-6xl';
+
+        app.innerHTML = `
+        <div class="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-blue-500 p-4 py-10">
+            <div class="max-w-6xl mx-auto">
+                <div class="text-center mb-8">
+                    <h1 class="text-4xl font-bold text-white mb-2">🎉 The Big Reveal!</h1>
+                    <p class="text-purple-100">${sheets.length} creature${sheets.length === 1 ? '' : 's'}, born from chaos.</p>
+                </div>
+
+                <div class="grid gap-6 ${gridCols} ${gridMaxW} mx-auto">
+                    ${sheets.map((sheet, si) => `
+                    <div class="bg-white rounded-2xl shadow-2xl p-4">
+                        <div class="rounded-lg overflow-hidden border-2 border-gray-200">
+                            ${sheet.sections.map((sec, i) => `
+                                <div class="fade-in" style="animation-delay:${(si * 0.3 + i * 0.8)}s">
+                                    <img src="${sec.image}" class="block w-full" style="margin-top:-1px">
+                                </div>
+                            `).join('')}
+                        </div>
+                        <div class="mt-3 text-xs text-gray-500 space-y-0.5">
+                            ${sheet.sections.map(sec => `
+                                <p><b>${SECTION_LABELS[sec.section]}:</b> ${sec.artist || '?'}${sec.inspiration ? ` <span class="italic text-purple-400 capitalize">— ${sec.inspiration}</span>` : ''}</p>
+                            `).join('')}
+                        </div>
+                        <button class="downloadBtn mt-3 w-full px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-lg" data-sheet="${si}">
+                            📥 Download
+                        </button>
+                        ${S.authToken && S.user ? `
+                            <button class="saveFavBtn mt-2 w-full px-3 py-2 bg-yellow-100 hover:bg-yellow-200 text-yellow-800 text-sm font-semibold rounded-lg"
+                                data-sheet="${si}" ${savedFavoriteKeys.has(`${g.code}-${si}`) || S.user.favoritesCount >= MAX_FAVORITES ? 'disabled' : ''}>
+                                ${savedFavoriteKeys.has(`${g.code}-${si}`) ? '★ Saved to Favorites' : (S.user.favoritesCount >= MAX_FAVORITES ? `☆ Favorites full (${MAX_FAVORITES}/${MAX_FAVORITES})` : '☆ Save to Favorites')}
+                            </button>
+                        ` : `
+                            <button class="loginToSaveBtn mt-2 w-full px-3 py-2 bg-gray-50 hover:bg-gray-100 text-gray-500 text-xs font-medium rounded-lg">
+                                Log in to save this to your favorites
+                            </button>
+                        `}
+                    </div>
+                    `).join('')}
+                </div>
+
+                <div class="mt-8 max-w-md mx-auto space-y-3">
+                    <button id="shareBtn" class="w-full px-4 py-3 bg-white/20 hover:bg-white/30 text-white font-semibold rounded-xl border border-white/40">
+                        🔗 Copy link to these results
+                    </button>
+                    <button id="againBtn" class="w-full px-4 py-3 bg-white text-purple-700 font-bold rounded-xl text-lg hover:bg-purple-50">
+                        🔄 Play Again
+                    </button>
+                </div>
+            </div>
+        </div>`;
+
+        document.querySelectorAll('.downloadBtn').forEach(btn => {
+            btn.addEventListener('click', () => downloadSheet(sheets[Number(btn.dataset.sheet)], Number(btn.dataset.sheet) + 1));
+        });
+        document.querySelectorAll('.saveFavBtn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const si = Number(btn.dataset.sheet);
+                saveSheetToFavorites(sheets[si], si, g.code, btn);
+            });
+        });
+        document.querySelectorAll('.loginToSaveBtn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                S.returnToResults = true;
+                S.screen = 'login';
+                render();
+            });
+        });
+        document.getElementById('shareBtn').addEventListener('click', () => {
+            navigator.clipboard.writeText(`${location.origin}/?code=${g.code}`);
+        });
+        document.getElementById('againBtn').addEventListener('click', () => {
+            clearSession();
+            S.screen = 'home';
+            S.lastRound = null;
+            S.submittedThisRound = false;
+            history.replaceState(null, '', '/');
+            render();
+        });
+    }
+
+    // Stitches a sheet's 3 sections into one tall PNG data URL (shared by download + favorites)
+    // Every submitted section is already normalized to OUTPUT_W x OUTPUT_H
+    // (see normalizeToOutputSize), so stitching is uniform regardless of which
+    // players' sections were drawn free vs. paid.
+    function stitchSheetDataUrl(sheet) {
+        return new Promise((resolve) => {
+            const c = document.createElement('canvas');
+            c.width = OUTPUT_W;
+            c.height = OUTPUT_H * 3;
+            const ctx = c.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, c.width, c.height);
+
+            let loaded = 0;
+            sheet.sections.forEach((sec, i) => {
+                const img = new Image();
+                img.onload = () => {
+                    ctx.drawImage(img, 0, i * OUTPUT_H, OUTPUT_W, OUTPUT_H);
+                    loaded++;
+                    if (loaded === 3) resolve(c.toDataURL('image/png'));
+                };
+                img.src = sec.image;
+            });
+        });
+    }
+
+    function downloadSheet(sheet, num) {
+        stitchSheetDataUrl(sheet).then(dataUrl => {
+            const a = document.createElement('a');
+            a.href = dataUrl;
+            a.download = `exquisite-corpse-${S.code || 'game'}-${num}.png`;
+            a.click();
+        });
+    }
+
+    // Saved-this-session tracker (avoids double-saving the same sheet on re-render)
+    const savedFavoriteKeys = new Set();
+
+    async function saveSheetToFavorites(sheet, si, gameCode, btn) {
+        const key = `${gameCode}-${si}`;
+        if (savedFavoriteKeys.has(key)) return;
+
+        btn.disabled = true;
+        btn.textContent = 'Saving...';
+        try {
+            const dataUrl = await stitchSheetDataUrl(sheet);
+            const artists = sheet.sections.map(sec => sec.artist || '?');
+            const inspirations = sheet.sections.map(sec => sec.inspiration || null);
+            const { user } = await authApi('/account/favorites', {
+                method: 'POST',
+                body: JSON.stringify({ image: dataUrl, gameCode, artists, inspirations }),
+            });
+            S.user = user;
+            savedFavoriteKeys.add(key);
+            btn.textContent = '★ Saved to Favorites';
+            btn.className = btn.className.replace('bg-yellow-100 hover:bg-yellow-200 text-yellow-800', 'bg-yellow-400 text-yellow-900');
+        } catch (e) {
+            btn.disabled = false;
+            if (e.message.includes('favorites (max limit)')) {
+                btn.textContent = `☆ Favorites full (${MAX_FAVORITES}/${MAX_FAVORITES})`;
+            } else {
+                btn.textContent = '☆ Save to Favorites';
+                alert('Could not save favorite: ' + e.message);
+            }
+        }
+    }
+
+    // ---------- SIGNUP ----------
+    function renderSignup() {
+        app.innerHTML = `
+        <div class="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-blue-500 p-4 flex items-center justify-center">
+            <div class="w-full max-w-md">
+                <div class="bg-white rounded-2xl shadow-2xl p-8">
+                    <button id="backHomeBtn" class="text-sm text-gray-400 hover:text-gray-600 mb-4">&larr; Back</button>
+                    <div class="text-center mb-6">
+                        <h1 class="text-3xl font-bold text-gray-900 mb-2">Create Account</h1>
+                        <p class="text-gray-600 text-sm">$2.99 one-time. Unlocks your account, print-quality (300 DPI) drawings, and a 15-drawing favorites shelf. No subscription, ever.</p>
+                    </div>
+
+                    ${S.authError ? `<div class="mb-4 p-3 bg-red-50 border border-red-300 text-red-700 rounded-lg text-sm">${S.authError}</div>` : ''}
+
+                    <div class="space-y-3 mb-2">
+                        <input id="suEmail" type="email" placeholder="Email" class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500">
+                        <input id="suUsername" type="text" maxlength="30" placeholder="Username" class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500">
+                        <input id="suPassword" type="password" placeholder="Password (min 8 characters)" class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500">
+                        <input id="suPasswordConfirm" type="password" placeholder="Confirm password" class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500">
+                    </div>
+                    <p class="text-xs text-gray-400 mb-4">There's no password reset yet — keep this password somewhere safe.</p>
+
+                    <button id="suSubmitBtn" class="w-full px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-bold rounded-xl text-lg transition">
+                        Continue to Payment — $2.99
+                    </button>
+
+                    <p class="text-center text-sm text-gray-500 mt-4">
+                        Already have an account? <button id="goLoginBtn" class="text-purple-600 font-semibold hover:underline">Log in</button>
+                    </p>
+                </div>
+            </div>
+        </div>`;
+
+        S.authError = null;
+
+        document.getElementById('backHomeBtn').addEventListener('click', () => { S.screen = 'home'; render(); });
+        document.getElementById('goLoginBtn').addEventListener('click', () => { S.screen = 'login'; render(); });
+
+        function showSignupError(msg) { S.authError = msg; renderSignup(); }
+
+        document.getElementById('suSubmitBtn').addEventListener('click', async () => {
+            const email = document.getElementById('suEmail').value.trim();
+            const username = document.getElementById('suUsername').value.trim();
+            const password = document.getElementById('suPassword').value;
+            const passwordConfirm = document.getElementById('suPasswordConfirm').value;
+
+            if (!email || !username || !password) return showSignupError('All fields are required.');
+            if (password.length < 8) return showSignupError('Password must be at least 8 characters.');
+            if (password !== passwordConfirm) return showSignupError('Passwords do not match.');
+
+            const btn = document.getElementById('suSubmitBtn');
+            btn.disabled = true;
+            btn.textContent = 'Redirecting to payment...';
+
+            try {
+                const { url } = await api('/stripe/checkout', {
+                    method: 'POST',
+                    body: JSON.stringify({ email, username, password }),
+                });
+                location.href = url;
+            } catch (e) {
+                btn.disabled = false;
+                btn.textContent = 'Continue to Payment — $2.99';
+                showSignupError(e.message);
+            }
+        });
+    }
+
+    // ---------- CHECKOUT PENDING (after Stripe redirect) ----------
+    function renderCheckoutPending() {
+        app.innerHTML = `
+        <div class="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-blue-500 p-4 flex items-center justify-center">
+            <div class="w-full max-w-md">
+                <div class="bg-white rounded-2xl shadow-2xl p-8 text-center">
+                    <div class="text-5xl mb-4 animate-bounce">🎉</div>
+                    <h2 class="text-2xl font-bold mb-2">Payment received!</h2>
+                    <p class="text-gray-600 mb-6" id="checkoutStatusMsg">Setting up your account...</p>
+                    <div id="checkoutManualLogin" class="hidden">
+                        <button id="checkoutLoginBtn" class="w-full px-4 py-3 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl">Log in now</button>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+
+        const sessionId = new URLSearchParams(location.search).get('session_id');
+        if (!sessionId) { history.replaceState(null, '', '/'); S.screen = 'home'; render(); return; }
+
+        let attempts = 0;
+        const maxAttempts = 10; // ~15s of polling — the webhook usually lands within a couple seconds
+
+        async function poll() {
+            attempts++;
+            try {
+                const result = await api(`/auth/checkout-status?session_id=${encodeURIComponent(sessionId)}`);
+                if (result.ready) {
+                    setAuthSession(result.token, result.user);
+                    history.replaceState(null, '', '/');
+                    S.screen = 'account';
+                    render();
+                    return;
+                }
+            } catch (e) {
+                // keep trying — webhook may not have landed yet
+            }
+
+            if (attempts >= maxAttempts) {
+                document.getElementById('checkoutStatusMsg').textContent =
+                    "Almost there — this is taking longer than expected. You can log in once it's ready.";
+                document.getElementById('checkoutManualLogin').classList.remove('hidden');
+                document.getElementById('checkoutLoginBtn').addEventListener('click', () => {
+                    history.replaceState(null, '', '/');
+                    S.screen = 'login';
+                    render();
+                });
+                return;
+            }
+
+            setTimeout(poll, 1500);
+        }
+        poll();
+    }
+
+    // ---------- LOGIN ----------
+    function renderLogin() {
+        app.innerHTML = `
+        <div class="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-blue-500 p-4 flex items-center justify-center">
+            <div class="w-full max-w-md">
+                <div class="bg-white rounded-2xl shadow-2xl p-8">
+                    <button id="backHomeBtn" class="text-sm text-gray-400 hover:text-gray-600 mb-4">&larr; Back</button>
+                    <h1 class="text-3xl font-bold text-gray-900 mb-6 text-center">Log In</h1>
+
+                    ${S.authError ? `<div class="mb-4 p-3 bg-red-50 border border-red-300 text-red-700 rounded-lg text-sm">${S.authError}</div>` : ''}
+
+                    <div class="space-y-3 mb-4">
+                        <input id="liEmail" type="email" placeholder="Email" class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500">
+                        <input id="liPassword" type="password" placeholder="Password" class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500">
+                    </div>
+
+                    <button id="liSubmitBtn" class="w-full px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-bold rounded-xl text-lg transition">
+                        Log In
+                    </button>
+
+                    <p class="text-center text-sm text-gray-500 mt-4">
+                        Don't have an account? <button id="goSignupBtn" class="text-purple-600 font-semibold hover:underline">Sign up ($2.99)</button>
+                    </p>
+                </div>
+            </div>
+        </div>`;
+
+        S.authError = null;
+
+        document.getElementById('backHomeBtn').addEventListener('click', () => { S.returnToResults = false; S.screen = 'home'; render(); });
+        document.getElementById('goSignupBtn').addEventListener('click', () => { S.screen = 'signup'; render(); });
+
+        function showLoginError(msg) { S.authError = msg; renderLogin(); }
+
+        const submit = async () => {
+            const email = document.getElementById('liEmail').value.trim();
+            const password = document.getElementById('liPassword').value;
+            if (!email || !password) return showLoginError('Email and password required.');
+
+            const btn = document.getElementById('liSubmitBtn');
+            btn.disabled = true;
+            btn.textContent = 'Logging in...';
+
+            try {
+                const { token, user } = await api('/auth/login', {
+                    method: 'POST',
+                    body: JSON.stringify({ email, password }),
+                });
+                setAuthSession(token, user);
+                S.screen = S.returnToResults ? 'results' : 'account';
+                S.returnToResults = false;
+                render();
+            } catch (e) {
+                btn.disabled = false;
+                btn.textContent = 'Log In';
+                showLoginError(e.message);
+            }
+        };
+
+        document.getElementById('liSubmitBtn').addEventListener('click', submit);
+        document.getElementById('liPassword').addEventListener('keypress', e => { if (e.key === 'Enter') submit(); });
+    }
+
+    // ---------- ACCOUNT ----------
+    function renderAccount() {
+        if (!S.authToken) { S.screen = 'home'; render(); return; }
+
+        // On a fresh page load, S.user may not be populated yet even though authToken persisted
+        if (!S.user) {
+            app.innerHTML = `<div class="min-h-screen flex items-center justify-center text-gray-400">Loading account...</div>`;
+            refreshMe().then(user => {
+                if (!user) S.screen = 'home';
+                render();
+            });
+            return;
+        }
+
+        const u = S.user;
+        app.innerHTML = `
+        <div class="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 p-4 py-10">
+            <div class="max-w-lg mx-auto">
+                <button id="backHomeBtn" class="text-sm text-gray-400 hover:text-gray-600 mb-4">&larr; Back to home</button>
+                <div class="bg-white rounded-2xl shadow-lg p-8">
+                    <div class="flex items-center gap-4 mb-6">
+                        <div class="relative">
+                            <div id="avatarPreview" class="w-16 h-16 rounded-full bg-purple-100 flex items-center justify-center text-2xl font-bold text-purple-600 overflow-hidden">
+                                ${u.avatarDataUrl ? `<img src="${u.avatarDataUrl}" class="w-full h-full object-cover">` : u.username.slice(0, 1).toUpperCase()}
+                            </div>
+                            <label class="absolute -bottom-1 -right-1 w-6 h-6 bg-purple-600 hover:bg-purple-700 rounded-full flex items-center justify-center text-white text-xs cursor-pointer" title="Upload avatar">
+                                📷
+                                <input id="avatarInput" type="file" accept="image/png,image/jpeg" class="hidden">
+                            </label>
+                        </div>
+                        <div class="flex-1">
+                            <p class="text-xs text-gray-400">Signed in as</p>
+                            <p class="text-sm text-gray-600">${u.email}</p>
+                        </div>
+                    </div>
+
+                    <div class="mb-6">
+                        <label class="block text-xs font-medium text-gray-500 mb-1">Username</label>
+                        <div class="flex gap-2">
+                            <input id="usernameInput" type="text" maxlength="30" value="${u.username}"
+                                class="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500">
+                            <button id="saveUsernameBtn" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-lg">Save</button>
+                        </div>
+                        <p id="usernameMsg" class="text-xs mt-1"></p>
+                    </div>
+
+                    <div class="mb-6">
+                        <h3 class="text-sm font-semibold text-gray-700 mb-2">⭐ Favorites (${u.favorites.length}/${MAX_FAVORITES})</h3>
+                        <div class="grid grid-cols-3 gap-3">
+                            ${u.favorites.length > 0 ? u.favorites.map(fav => `
+                                <div class="relative group">
+                                    <img src="${fav.image}" class="w-full rounded-lg border-2 border-gray-200">
+                                    <button class="removeFavBtn absolute top-1 right-1 w-6 h-6 bg-red-500 hover:bg-red-600 text-white text-xs rounded-full opacity-0 group-hover:opacity-100 transition" data-fav-id="${fav.id}">✕</button>
+                                </div>
+                            `).join('') : `<p class="col-span-3 text-sm text-gray-400 italic">No favorites saved yet — finish a game and save your favorite creature!</p>`}
+                        </div>
+                    </div>
+
+                    <button id="logoutBtn" class="w-full px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-semibold rounded-lg">Log Out</button>
+                </div>
+            </div>
+        </div>`;
+
+        document.getElementById('backHomeBtn').addEventListener('click', () => { S.screen = 'home'; render(); });
+
+        document.getElementById('logoutBtn').addEventListener('click', () => {
+            clearAuthSession();
+            S.screen = 'home';
+            render();
+        });
+
+        document.getElementById('saveUsernameBtn').addEventListener('click', async () => {
+            const newUsername = document.getElementById('usernameInput').value.trim();
+            const msg = document.getElementById('usernameMsg');
+            if (!newUsername || newUsername === S.user.username) return;
+            try {
+                const { user } = await authApi('/account/username', {
+                    method: 'PUT',
+                    body: JSON.stringify({ username: newUsername }),
+                });
+                S.user = user;
+                msg.textContent = 'Saved!';
+                msg.className = 'text-xs mt-1 text-green-600';
+            } catch (e) {
+                msg.textContent = e.message;
+                msg.className = 'text-xs mt-1 text-red-600';
+            }
+        });
+
+        document.getElementById('avatarInput').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const img = new Image();
+            const reader = new FileReader();
+            reader.onload = (ev) => { img.src = ev.target.result; };
+            img.onload = async () => {
+                // Center-crop to square, then downscale to the final 50x50 avatar size
+                const size = Math.min(img.width, img.height);
+                const sx = (img.width - size) / 2;
+                const sy = (img.height - size) / 2;
+
+                const c = document.createElement('canvas');
+                c.width = 50;
+                c.height = 50;
+                const ctx = c.getContext('2d');
+                ctx.drawImage(img, sx, sy, size, size, 0, 0, 50, 50);
+                const dataUrl = c.toDataURL('image/png');
+
+                try {
+                    const { user } = await authApi('/account/avatar', {
+                        method: 'PUT',
+                        body: JSON.stringify({ image: dataUrl }),
+                    });
+                    S.user = user;
+                    renderAccount();
+                } catch (err) {
+                    alert('Could not upload avatar: ' + err.message);
+                }
+            };
+            reader.readAsDataURL(file);
+        });
+
+        document.querySelectorAll('.removeFavBtn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                try {
+                    const { user } = await authApi(`/account/favorites/${btn.dataset.favId}`, { method: 'DELETE' });
+                    S.user = user;
+                    renderAccount();
+                } catch (e) {
+                    alert('Could not remove favorite: ' + e.message);
+                }
+            });
+        });
+    }
+
+    // ================= BOOT =================
+    (async function boot() {
+        // Returning from Stripe checkout takes priority over game-session restore
+        if (new URLSearchParams(location.search).get('checkout') === 'success') {
+            S.screen = 'checkoutPending';
+            render();
+            return;
+        }
+
+        // Pre-fetch account state in the background so the home screen's auth
+        // badge is correct immediately, even after a hard page reload
+        if (S.authToken) refreshMe().then(() => { if (S.screen === 'home') render(); });
+
+        if (S.code && S.playerId) {
+            try {
+                const data = await api(`/games/${S.code}?playerId=${S.playerId}`);
+                S.game = data;
+                if (data.status === 'waiting') S.screen = 'lobby';
+                else if (data.status === 'active') {
+                    S.screen = 'draw';
+                    S.lastRound = data.round;
+                    S.submittedThisRound = data.you ? data.you.submitted : false;
+                } else if (data.status === 'completed') S.screen = 'results';
+                render();
+                if (data.status !== 'completed') startPolling();
+                return;
+            } catch (e) {
+                clearSession();
+            }
+        }
+        render();
+    })();
+    </script>
+</body>
+</html>
