@@ -1147,6 +1147,11 @@
                     </div>
                     <p class="text-xs text-gray-400 mb-4">There's no password reset yet — keep this password somewhere safe.</p>
 
+                    <button id="betaToggleBtn" type="button" class="text-xs text-gray-400 hover:text-gray-600 mb-3">Have a beta code?</button>
+                    <div id="betaCodeWrap" class="hidden mb-3">
+                        <input id="suBetaCode" type="text" placeholder="Beta code" class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500 text-sm">
+                    </div>
+
                     <button id="suSubmitBtn" class="w-full px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-bold rounded-xl text-lg transition">
                         Continue to Payment — $2.99
                     </button>
@@ -1165,20 +1170,50 @@
 
         function showSignupError(msg) { S.authError = msg; renderSignup(); }
 
-        document.getElementById('suSubmitBtn').addEventListener('click', async () => {
+        const submitBtn = document.getElementById('suSubmitBtn');
+        const betaInput = document.getElementById('suBetaCode');
+
+        document.getElementById('betaToggleBtn').addEventListener('click', () => {
+            document.getElementById('betaCodeWrap').classList.remove('hidden');
+            document.getElementById('betaToggleBtn').classList.add('hidden');
+            betaInput.focus();
+        });
+        betaInput.addEventListener('input', () => {
+            submitBtn.textContent = betaInput.value.trim() ? 'Redeem Beta Code' : 'Continue to Payment — $2.99';
+        });
+
+        submitBtn.addEventListener('click', async () => {
             const email = document.getElementById('suEmail').value.trim();
             const username = document.getElementById('suUsername').value.trim();
             const password = document.getElementById('suPassword').value;
             const passwordConfirm = document.getElementById('suPasswordConfirm').value;
+            const betaCode = betaInput.value.trim();
 
             if (!email || !username || !password) return showSignupError('All fields are required.');
             if (password.length < 8) return showSignupError('Password must be at least 8 characters.');
             if (password !== passwordConfirm) return showSignupError('Passwords do not match.');
 
-            const btn = document.getElementById('suSubmitBtn');
-            btn.disabled = true;
-            btn.textContent = 'Redirecting to payment...';
+            submitBtn.disabled = true;
 
+            if (betaCode) {
+                submitBtn.textContent = 'Redeeming code...';
+                try {
+                    const { token, user } = await api('/auth/beta-signup', {
+                        method: 'POST',
+                        body: JSON.stringify({ email, username, password, betaCode }),
+                    });
+                    setAuthSession(token, user);
+                    S.screen = 'account';
+                    render();
+                } catch (e) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Redeem Beta Code';
+                    showSignupError(e.message);
+                }
+                return;
+            }
+
+            submitBtn.textContent = 'Redirecting to payment...';
             try {
                 const { url } = await api('/stripe/checkout', {
                     method: 'POST',
@@ -1186,8 +1221,8 @@
                 });
                 location.href = url;
             } catch (e) {
-                btn.disabled = false;
-                btn.textContent = 'Continue to Payment — $2.99';
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Continue to Payment — $2.99';
                 showSignupError(e.message);
             }
         });

@@ -182,6 +182,21 @@ function handleApi(req, res, url) {
   }
 
   // ===== AUTH =====
+  // POST /api/auth/beta-signup { email, username, password, betaCode }
+  // Creates a paid account directly, bypassing Stripe, when BETA_CODE matches.
+  if (url.pathname === '/api/auth/beta-signup' && req.method === 'POST') {
+    return readBody(req, 10_000, async (err, body) => {
+      if (err) return json(res, 400, { error: err.message });
+      try {
+        const result = await payments.handleBetaSignup(body);
+        json(res, 200, result);
+      } catch (e) {
+        const status = e.status || 500;
+        json(res, status, { error: e.error || e.message });
+      }
+    });
+  }
+
   if (url.pathname === '/api/auth/login' && req.method === 'POST') {
     return readBody(req, 10_000, async (err, body) => {
       if (err) return json(res, 400, { error: err.message });

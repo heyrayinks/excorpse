@@ -1,6 +1,11 @@
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const auth = require('./auth');
 const data = require('./data');
+const account = require('./account');
+
+// Stored as an env var (not a source-code literal) since this repo is public —
+// hardcoding it here would make it visible to anyone browsing GitHub.
+const BETA_CODE = process.env.BETA_CODE || null;
 
 // Validation for signup request
 exports.validateSignupRequest = (body) => {
@@ -67,6 +72,30 @@ exports.createCheckoutSession = async (email, username, password) => {
     console.error('Stripe error:', err);
     throw { status: 500, error: 'Failed to create checkout session' };
   }
+};
+
+// Beta signup: creates a paid account directly, bypassing Stripe entirely,
+// when a valid BETA_CODE is supplied. Auto-logs in on success, same shape as /api/auth/login.
+exports.handleBetaSignup = async (body) => {
+  const { email, username, password, betaCode } = body;
+
+  if (!BETA_CODE) {
+    throw { status: 403, error: 'Beta signup is not enabled' };
+  }
+  if (!betaCode || betaCode.trim().toLowerCase() !== BETA_CODE.toLowerCase()) {
+    throw { status: 403, error: 'Invalid beta code' };
+  }
+
+  const errors = exports.validateSignupRequest({ email, username, password });
+  if (errors) {
+    throw { status: 400, error: errors[0] };
+  }
+
+  const { passwordHash, passwordSalt } = auth.hashPassword(password);
+  const user = await data.createUser(email, username, passwordHash, passwordSalt, null, null, 'beta');
+
+  const token = auth.signToken(user.id);
+  return { token, user: account.serializeUser(user) };
 };
 
 // Handle Stripe webhook: checkout.session.completed

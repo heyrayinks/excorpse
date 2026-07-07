@@ -79,7 +79,7 @@ exports.getUserByUsername = (username) => {
   return users.find(u => u.username.toLowerCase() === username.toLowerCase()) || null;
 };
 
-exports.createUser = (email, username, passwordHash, passwordSalt, stripeCustomerId, stripeCheckoutSessionId) => {
+exports.createUser = (email, username, passwordHash, passwordSalt, stripeCustomerId, stripeCheckoutSessionId, signupMethod = 'stripe') => {
   return queue(() => {
     const data = readUsers();
     // Re-validate on write (defensive)
@@ -97,7 +97,8 @@ exports.createUser = (email, username, passwordHash, passwordSalt, stripeCustome
       passwordHash,
       passwordSalt,
       avatarDataUrl: null,
-      paid: true, // Only created after Stripe confirms payment
+      paid: true, // Only created after Stripe confirms payment (or a valid beta code)
+      signupMethod, // 'stripe' | 'beta' — for tracking how the account was unlocked
       stripeCustomerId,
       stripeCheckoutSessionId,
       createdAt: Date.now(),
