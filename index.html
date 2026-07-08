@@ -50,6 +50,7 @@
         user: null,            // { id, email, username, avatarDataUrl, paid, favorites, favoritesCount }
         authError: null,
         returnToResults: false, // true if signup/login was triggered from the results screen
+        notifyEnabled: localStorage.getItem('ec_notifyEnabled') === 'true',
     };
 
     const app = document.getElementById('app');
@@ -219,6 +220,12 @@
                 S.submittedThisRound = cur.you ? cur.you.submitted : false;
                 S.screen = 'draw';
                 render();
+                // Round 1 fires immediately after everyone's already looking at the
+                // screen (right after Start Game) — only notify for later rounds,
+                // when someone may have wandered off waiting for their turn.
+                if (cur.round > 1 && cur.you && !cur.you.submitted) {
+                    maybeNotify('Your turn! 🎨', `Round ${cur.round}: draw the ${cur.section}.`);
+                }
             } else if (S.screen !== 'draw') {
                 S.screen = 'draw';
                 S.submittedThisRound = cur.you ? cur.you.submitted : false;
@@ -227,8 +234,70 @@
                 updateWaitingStatus(cur);
             }
         } else if (cur.status === 'completed') {
-            if (S.screen !== 'results') { S.screen = 'results'; stopPolling(); render(); }
+            if (S.screen !== 'results') {
+                S.screen = 'results';
+                stopPolling();
+                render();
+                maybeNotify('The reveal is ready! 🎉', 'All artists are done — come see the creatures.');
+            }
         }
+    }
+
+    // ---------- NOTIFICATIONS ----------
+    // "Simple" tier: uses the Notification API, which only fires while this tab
+    // stays open somewhere (even backgrounded) — not true push. Good enough for
+    // "I'll check back later today" without babysitting the tab; won't survive
+    // fully closing it. Real push (works when closed) would need a service
+    // worker + subscriptions, a bigger build for later if this isn't enough.
+    function canNotify() {
+        return 'Notification' in window && S.notifyEnabled && Notification.permission === 'granted';
+    }
+
+    async function requestNotifyPermission() {
+        if (!('Notification' in window)) {
+            alert("Your browser doesn't support notifications.");
+            return false;
+        }
+        const perm = await Notification.requestPermission();
+        S.notifyEnabled = perm === 'granted';
+        localStorage.setItem('ec_notifyEnabled', String(S.notifyEnabled));
+        return S.notifyEnabled;
+    }
+
+    function maybeNotify(title, body) {
+        if (!canNotify()) return;
+        if (!document.hidden && document.hasFocus()) return; // already looking, skip
+        try {
+            const n = new Notification(title, { body });
+            n.onclick = () => { window.focus(); n.close(); };
+        } catch (e) { /* ignore — some browsers restrict this in odd contexts */ }
+    }
+
+    // Shared toggle UI reused on the lobby and waiting screens
+    function renderNotifyToggle() {
+        if (!('Notification' in window)) return '';
+        if (Notification.permission === 'denied') {
+            return `<p class="text-xs text-gray-400 text-center mt-3">🔕 Notifications are blocked in your browser settings</p>`;
+        }
+        const enabled = S.notifyEnabled && Notification.permission === 'granted';
+        return `
+        <button id="notifyToggleBtn" class="w-full mt-3 px-3 py-2 text-sm font-medium rounded-lg border ${enabled ? 'bg-green-50 text-green-700 border-green-200' : 'bg-gray-50 hover:bg-gray-100 text-gray-500 border-gray-200'}">
+            ${enabled ? "🔔 Notifying you when it's your turn" : '🔔 Notify me when it\'s my turn'}
+        </button>`;
+    }
+
+    function wireNotifyToggle() {
+        const btn = document.getElementById('notifyToggleBtn');
+        if (!btn) return;
+        btn.addEventListener('click', async () => {
+            if (S.notifyEnabled && Notification.permission === 'granted') {
+                S.notifyEnabled = false;
+                localStorage.setItem('ec_notifyEnabled', 'false');
+            } else {
+                await requestNotifyPermission();
+            }
+            render();
+        });
     }
 
     // ================= RENDER =================
@@ -435,6 +504,8 @@
                     <button id="cancelLobbyBtn" class="w-full px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-500 text-sm font-medium rounded-lg">
                         Cancel
                     </button>
+
+                    ${renderNotifyToggle()}
                 </div>
             </div>
         </div>`;
@@ -452,6 +523,7 @@
             history.replaceState(null, '', '/');
             render();
         });
+        wireNotifyToggle();
 
         updateLobby(g);
     }
@@ -512,7 +584,7 @@
         }
 
         app.innerHTML = `
-        <div class="min-h-screen bg-gray-100 flex flex-col" style="height:100vh; overflow:hidden">
+        <div class="bg-gray-100 flex flex-col" style="height:100vh; height:100dvh; overflow:hidden">
             <!-- Top bar -->
             <div class="flex items-center justify-between px-4 py-2 bg-white shadow-sm shrink-0">
                 <div class="flex items-center gap-3">
@@ -557,7 +629,7 @@
                 </div>
                 <div class="h-6 border-l border-gray-300"></div>
                 <div class="flex items-center gap-1.5" id="colorRow">
-                    ${['#000000', '#e11d48', '#f97316', '#facc15', '#16a34a', '#2563eb', '#9333ea', '#f9a8d4', '#78350f', '#9ca3af'].map(c => `
+                    ${['#000000'].map(c => `
                         <button data-color="${c}" class="colorBtn w-7 h-7 rounded-full border-2 ${c === S.brushColor ? 'border-gray-900 scale-110' : 'border-gray-200'}" style="background:${c}"></button>
                     `).join('')}
                     <label class="relative w-7 h-7 rounded-full border-2 border-gray-300 overflow-hidden cursor-pointer ml-1" title="Custom color"
@@ -941,10 +1013,12 @@
                     <h2 class="text-2xl font-bold mb-2">Nice ${SECTION_LABELS[g.section] ? SECTION_LABELS[g.section].toLowerCase() : 'work'}!</h2>
                     <p class="text-gray-600 mb-6">Waiting for the other artists to finish round ${g.round}...</p>
                     <div id="roundStatus" class="space-y-2"></div>
+                    ${renderNotifyToggle()}
                 </div>
             </div>
         </div>`;
         updateWaitingStatus(g);
+        wireNotifyToggle();
     }
 
     function updateWaitingStatus(g) {
