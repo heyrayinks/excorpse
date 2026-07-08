@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const auth = require('./auth.js');
 const payments = require('./payments.js');
 const account = require('./account.js');
+const friends = require('./friends.js');
 const data = require('./data.js');
 
 const PORT = process.env.PORT || 3000;
@@ -33,6 +34,19 @@ function generateCode() {
     }
   } while (games.has(code));
   return code;
+}
+
+// Shared by the anonymous /join handler and the friend-invite accept handler.
+function addPlayerToGame(game, name, userId) {
+  const player = {
+    id: crypto.randomUUID(),
+    name,
+    order: game.players.length + 1,
+    submissions: {}, // round -> true
+    userId: userId || null,
+  };
+  game.players.push(player);
+  return player;
 }
 
 const SECTIONS = ['head', 'torso', 'legs']; // section drawn in round 1, 2, 3 (always 3 rounds)
@@ -302,6 +316,228 @@ function handleApi(req, res, url) {
     }
   }
 
+  // ===== FRIENDS ENDPOINTS (require auth) =====
+  if (url.pathname === '/api/friends' && req.method === 'GET') {
+    try {
+      const userId = auth.extractAndVerifyToken(req);
+      return json(res, 200, friends.getFriends(userId));
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.error || e.message });
+    }
+  }
+
+  if (url.pathname === '/api/friends/requests' && req.method === 'GET') {
+    try {
+      const userId = auth.extractAndVerifyToken(req);
+      return json(res, 200, friends.getFriendRequests(userId));
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.error || e.message });
+    }
+  }
+
+  if (url.pathname === '/api/friends/requests' && req.method === 'POST') {
+    try {
+      const userId = auth.extractAndVerifyToken(req);
+      return readBody(req, 10_000, async (err, body) => {
+        if (err) return json(res, 400, { error: err.message });
+        try {
+          const result = await friends.sendFriendRequest(userId, body.toUsername);
+          json(res, 201, result);
+        } catch (e) {
+          const status = e.status || 500;
+          json(res, status, { error: e.error || e.message });
+        }
+      });
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.error || e.message });
+    }
+  }
+
+  const friendReqActionMatch = url.pathname.match(/^\/api\/friends\/requests\/([a-f0-9-]+)\/(accept|decline)$/);
+  if (friendReqActionMatch && req.method === 'POST') {
+    try {
+      const userId = auth.extractAndVerifyToken(req);
+      const otherUserId = friendReqActionMatch[1];
+      const fn = friendReqActionMatch[2] === 'accept' ? friends.acceptFriendRequest : friends.declineFriendRequest;
+      fn(userId, otherUserId).then(user => {
+        json(res, 200, { user });
+      }).catch(e => {
+        const status = e.status || 500;
+        json(res, status, { error: e.error || e.message });
+      });
+      return;
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.error || e.message });
+    }
+  }
+
+  const unfriendMatch = url.pathname.match(/^\/api\/friends\/([a-f0-9-]+)$/);
+  if (unfriendMatch && req.method === 'DELETE') {
+    try {
+      const userId = auth.extractAndVerifyToken(req);
+      friends.removeFriend(userId, unfriendMatch[1]).then(user => {
+        json(res, 200, { user });
+      }).catch(e => {
+        const status = e.status || 500;
+        json(res, status, { error: e.error || e.message });
+      });
+      return;
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.error || e.message });
+    }
+  }
+
+  // GET /api/friends/:userId/profile - requires friendship (or viewing self)
+  const profileMatch = url.pathname.match(/^\/api\/friends\/([a-f0-9-]+)\/profile$/);
+  if (profileMatch && req.method === 'GET') {
+    try {
+      const viewerId = auth.extractAndVerifyToken(req);
+      return json(res, 200, friends.getProfile(viewerId, profileMatch[1]));
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.error || e.message });
+    }
+  }
+
+  // POST /api/friends/:ownerId/profile/comments { text }
+  const profileCommentsMatch = url.pathname.match(/^\/api\/friends\/([a-f0-9-]+)\/profile\/comments$/);
+  if (profileCommentsMatch && req.method === 'POST') {
+    try {
+      const authorId = auth.extractAndVerifyToken(req);
+      const authorUser = account.getMe(authorId);
+      return readBody(req, 10_000, async (err, body) => {
+        if (err) return json(res, 400, { error: err.message });
+        try {
+          const result = await friends.addProfileComment(authorId, authorUser.username, profileCommentsMatch[1], body.text);
+          json(res, 201, result);
+        } catch (e) {
+          const status = e.status || 500;
+          json(res, status, { error: e.error || e.message });
+        }
+      });
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.error || e.message });
+    }
+  }
+
+  // DELETE /api/friends/:ownerId/profile/comments/:commentId - owner only
+  const profileCommentDeleteMatch = url.pathname.match(/^\/api\/friends\/([a-f0-9-]+)\/profile\/comments\/([a-f0-9-]+)$/);
+  if (profileCommentDeleteMatch && req.method === 'DELETE') {
+    try {
+      const requesterId = auth.extractAndVerifyToken(req);
+      friends.removeProfileComment(requesterId, profileCommentDeleteMatch[1], profileCommentDeleteMatch[2]).then(result => {
+        json(res, 200, result);
+      }).catch(e => {
+        const status = e.status || 500;
+        json(res, status, { error: e.error || e.message });
+      });
+      return;
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.error || e.message });
+    }
+  }
+
+  // POST /api/friends/:ownerId/favorites/:favoriteId/comments { text }
+  const favCommentsMatch = url.pathname.match(/^\/api\/friends\/([a-f0-9-]+)\/favorites\/([a-f0-9-]+)\/comments$/);
+  if (favCommentsMatch && req.method === 'POST') {
+    try {
+      const authorId = auth.extractAndVerifyToken(req);
+      const authorUser = account.getMe(authorId);
+      return readBody(req, 10_000, async (err, body) => {
+        if (err) return json(res, 400, { error: err.message });
+        try {
+          const result = await friends.addFavoriteComment(authorId, authorUser.username, favCommentsMatch[1], favCommentsMatch[2], body.text);
+          json(res, 201, result);
+        } catch (e) {
+          const status = e.status || 500;
+          json(res, status, { error: e.error || e.message });
+        }
+      });
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.error || e.message });
+    }
+  }
+
+  // DELETE /api/friends/:ownerId/favorites/:favoriteId/comments/:commentId - owner only
+  const favCommentDeleteMatch = url.pathname.match(/^\/api\/friends\/([a-f0-9-]+)\/favorites\/([a-f0-9-]+)\/comments\/([a-f0-9-]+)$/);
+  if (favCommentDeleteMatch && req.method === 'DELETE') {
+    try {
+      const requesterId = auth.extractAndVerifyToken(req);
+      friends.removeFavoriteComment(requesterId, favCommentDeleteMatch[1], favCommentDeleteMatch[2], favCommentDeleteMatch[3]).then(result => {
+        json(res, 200, result);
+      }).catch(e => {
+        const status = e.status || 500;
+        json(res, status, { error: e.error || e.message });
+      });
+      return;
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.error || e.message });
+    }
+  }
+
+  if (url.pathname === '/api/friends/invites' && req.method === 'GET') {
+    try {
+      const userId = auth.extractAndVerifyToken(req);
+      return json(res, 200, friends.getGameInvites(userId));
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.error || e.message });
+    }
+  }
+
+  const inviteAcceptMatch = url.pathname.match(/^\/api\/friends\/invites\/([a-f0-9-]+)\/accept$/);
+  if (inviteAcceptMatch && req.method === 'POST') {
+    try {
+      const userId = auth.extractAndVerifyToken(req);
+      const inviteId = inviteAcceptMatch[1];
+      const invite = data.getGameInvite(userId, inviteId);
+      if (!invite) return json(res, 404, { error: 'Invite not found' });
+
+      const game = games.get(invite.gameCode);
+      if (!game || game.status !== 'waiting') {
+        data.removeGameInvite(userId, inviteId).catch(() => {});
+        return json(res, 410, { error: 'This game is no longer available' });
+      }
+      if (game.players.length >= game.maxPlayers) {
+        return json(res, 409, { error: 'Game is full' });
+      }
+
+      const user = account.getMe(userId);
+      const player = addPlayerToGame(game, user.username, userId);
+      data.removeGameInvite(userId, inviteId).catch(() => {});
+      return json(res, 200, { playerId: player.id, ...publicState(game, player.id) });
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.error || e.message });
+    }
+  }
+
+  const inviteDeclineMatch = url.pathname.match(/^\/api\/friends\/invites\/([a-f0-9-]+)\/decline$/);
+  if (inviteDeclineMatch && req.method === 'POST') {
+    try {
+      const userId = auth.extractAndVerifyToken(req);
+      data.removeGameInvite(userId, inviteDeclineMatch[1]).then(() => {
+        json(res, 200, { ok: true });
+      }).catch(e => {
+        const status = e.status || 500;
+        json(res, status, { error: e.error || e.message });
+      });
+      return;
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.error || e.message });
+    }
+  }
+
   // ===== GAMES API (existing, unchanged) =====
   // POST /api/games -> create
   if (req.method === 'POST' && url.pathname === '/api/games') {
@@ -327,7 +563,7 @@ function handleApi(req, res, url) {
     });
   }
 
-  const match = url.pathname.match(/^\/api\/games\/([A-Z0-9]{6})(?:\/(join|start|submit))?$/i);
+  const match = url.pathname.match(/^\/api\/games\/([A-Z0-9]{6})(?:\/(join|start|submit|invite))?$/i);
   if (!match) return json(res, 404, { error: 'Not found' });
 
   const code = match[1].toUpperCase();
@@ -350,13 +586,8 @@ function handleApi(req, res, url) {
       const name = String(body.name || '').trim().slice(0, 30);
       if (!name) return json(res, 400, { error: 'Name is required' });
 
-      const player = {
-        id: crypto.randomUUID(),
-        name,
-        order: game.players.length + 1,
-        submissions: {}, // round -> true
-      };
-      game.players.push(player);
+      // set only if the joiner happens to be logged in; anonymous play is unaffected
+      const player = addPlayerToGame(game, name, auth.tryExtractUserId(req));
       json(res, 200, { playerId: player.id, ...publicState(game, player.id) });
     });
   }
@@ -373,6 +604,29 @@ function handleApi(req, res, url) {
       game.round = 1;
       game.roundStartedAt = Date.now();
       json(res, 200, publicState(game, body.playerId));
+    });
+  }
+
+  // POST /api/games/:code/invite { playerId, friendUserId } (creator only, friends only)
+  if (req.method === 'POST' && action === 'invite') {
+    return readBody(req, 10_000, async (err, body) => {
+      if (err) return json(res, 400, { error: err.message });
+      try {
+        const userId = auth.extractAndVerifyToken(req);
+        const creator = game.players.find(p => p.id === body.playerId);
+        if (!creator || creator.order !== 1 || creator.userId !== userId) {
+          return json(res, 403, { error: 'Only the game creator can invite' });
+        }
+        if (game.status !== 'waiting') return json(res, 409, { error: 'Game already started' });
+        if (game.players.length >= game.maxPlayers) return json(res, 409, { error: 'Game is full' });
+
+        const fromUser = account.getMe(userId);
+        const result = await friends.inviteToGame(userId, fromUser.username, game.code, body.friendUserId);
+        json(res, 201, result);
+      } catch (e) {
+        const status = e.status || 500;
+        json(res, status, { error: e.error || e.message });
+      }
     });
   }
 
@@ -409,6 +663,9 @@ function handleApi(req, res, url) {
           game.status = 'completed';
           game.round = null;
           game.completedAt = Date.now();
+          // Fire-and-forget: bump the "played together" counter for every logged-in
+          // pair. A lost increment on a rare crash is an acceptable stat inaccuracy.
+          data.recordGamesPlayedTogether(game.players.map(p => p.userId)).catch(() => {});
         } else {
           game.round += 1;
           game.roundStartedAt = Date.now();

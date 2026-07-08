@@ -86,6 +86,17 @@ exports.extractAndVerifyToken = (req) => {
   return userId;
 };
 
+// Best-effort identity check for endpoints that work with or without auth
+// (anonymous game creation/joining). Never throws — returns null on any
+// missing/invalid token instead, so callers don't need to special-case auth.
+exports.tryExtractUserId = (req) => {
+  try {
+    return exports.extractAndVerifyToken(req);
+  } catch (err) {
+    return null;
+  }
+};
+
 // Login endpoint logic — accepts either email or username as the identifier,
 // since that's what most people expect and mistyping one for the other
 // (or browser autofill mixing them up) shouldn't produce a confusing failure.

@@ -51,6 +51,12 @@
         authError: null,
         returnToResults: false, // true if signup/login was triggered from the results screen
         notifyEnabled: localStorage.getItem('ec_notifyEnabled') === 'true',
+        // friends state
+        friendsData: null,      // cached { friends, incoming, outgoing } for the account page
+        friendsShowAll: false,
+        expandedCommentKey: null, // which favorite/profile comment thread is expanded, e.g. "fav:<id>" or "profile"
+        friendProfileUserId: null,
+        friendProfileData: null,
     };
 
     const app = document.getElementById('app');
@@ -82,6 +88,13 @@
     ];
     function randomInspiration() {
         return INSPIRATION_WORDS[Math.floor(Math.random() * INSPIRATION_WORDS.length)];
+    }
+
+    // Escapes user-generated text (comments, usernames) before it's injected into innerHTML.
+    function escapeHtml(str) {
+        return String(str).replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+        }[c]));
     }
 
     // Letter-paper proportions (8.5 x 11). Free tier DRAWS at 100 DPI (850x1100)
@@ -140,12 +153,14 @@
         S.authToken = token;
         S.user = user;
         localStorage.setItem('ec_authToken', token);
+        startFriendsPolling();
     }
 
     function clearAuthSession() {
         S.authToken = null;
         S.user = null;
         localStorage.removeItem('ec_authToken');
+        stopFriendsPolling();
     }
 
     async function refreshMe() {
@@ -169,7 +184,10 @@
     }
 
     async function joinGame(code, name) {
-        const data = await api(`/games/${code}/join`, { method: 'POST', body: JSON.stringify({ name }) });
+        // Uses authApi (not api) so a logged-in player's userId gets attached
+        // server-side, feeding the "games played together" friend stat — anonymous
+        // players are unaffected since authApi only adds the header when S.authToken is set.
+        const data = await authApi(`/games/${code}/join`, { method: 'POST', body: JSON.stringify({ name }) });
         S.code = code.toUpperCase();
         S.playerId = data.playerId;
         S.game = data;
@@ -286,6 +304,52 @@
         </button>`;
     }
 
+    // Second, independent poll (separate from the in-game turn poll) that only
+    // does anything while authenticated and viewing home/account/a friend's
+    // profile — no point polling for social notifications mid-drawing.
+    let friendsPollTimer = null;
+
+    function getSeenIds(key) {
+        try { return new Set(JSON.parse(sessionStorage.getItem(key) || '[]')); }
+        catch (e) { return new Set(); }
+    }
+    function saveSeenIds(key, ids) {
+        sessionStorage.setItem(key, JSON.stringify(ids));
+    }
+
+    async function pollFriendsOnce() {
+        if (!S.authToken) return;
+        if (!['home', 'account', 'friendProfile'].includes(S.screen)) return;
+        try {
+            const [reqRes, invRes] = await Promise.all([
+                authApi('/friends/requests'),
+                authApi('/friends/invites'),
+            ]);
+
+            const seenReq = getSeenIds('ec_seenFriendReqs');
+            reqRes.incoming.forEach(r => {
+                if (!seenReq.has(r.userId)) maybeNotify('New friend request', `${r.username} wants to be friends`);
+            });
+            saveSeenIds('ec_seenFriendReqs', reqRes.incoming.map(r => r.userId));
+
+            const seenInv = getSeenIds('ec_seenInvites');
+            invRes.invites.forEach(i => {
+                if (!seenInv.has(i.id)) maybeNotify('Game invite', `${i.fromUsername} invited you to play`);
+            });
+            saveSeenIds('ec_seenInvites', invRes.invites.map(i => i.id));
+        } catch (e) { /* best-effort — a missed poll tick just means a delayed notification */ }
+    }
+
+    function startFriendsPolling() {
+        stopFriendsPolling();
+        if (!S.authToken) return;
+        friendsPollTimer = setInterval(pollFriendsOnce, 15000);
+    }
+    function stopFriendsPolling() {
+        if (friendsPollTimer) clearInterval(friendsPollTimer);
+        friendsPollTimer = null;
+    }
+
     function wireNotifyToggle() {
         const btn = document.getElementById('notifyToggleBtn');
         if (!btn) return;
@@ -311,6 +375,7 @@
         else if (S.screen === 'signup') renderSignup();
         else if (S.screen === 'login') renderLogin();
         else if (S.screen === 'account') renderAccount();
+        else if (S.screen === 'friendProfile') renderFriendProfile();
         else if (S.screen === 'checkoutPending') renderCheckoutPending();
     }
 
@@ -1624,6 +1689,80 @@
         document.getElementById('liPassword').addEventListener('keypress', e => { if (e.key === 'Enter') submit(); });
     }
 
+    // ---------- COMMENT THREADS (shared by account page + friend profile) ----------
+    // `key` is "profile" for a profile comment thread, or "fav:<favoriteId>" for a favorite's thread.
+    function renderCommentThread(comments, key, ownerId) {
+        const expanded = S.expandedCommentKey === key;
+        const canDelete = S.user && S.user.id === ownerId;
+        return `
+            <div class="mt-2">
+                <button class="toggleCommentsBtn text-xs text-purple-600 hover:underline" data-key="${key}">
+                    💬 ${comments.length} comment${comments.length === 1 ? '' : 's'}
+                </button>
+                ${expanded ? `
+                    <div class="mt-2 bg-gray-50 rounded-lg p-2">
+                        ${comments.length ? comments.map(c => `
+                            <div class="flex items-start justify-between gap-2 py-1 text-xs border-b border-gray-100 last:border-0">
+                                <span class="text-gray-700"><span class="font-semibold">${escapeHtml(c.authorUsername)}</span>: ${escapeHtml(c.text)}</span>
+                                ${canDelete ? `<button class="deleteCommentBtn text-gray-300 hover:text-red-500 shrink-0" data-key="${key}" data-comment-id="${c.id}">✕</button>` : ''}
+                            </div>
+                        `).join('') : `<p class="text-xs text-gray-400 italic py-1">No comments yet.</p>`}
+                        <div class="flex gap-1 mt-2">
+                            <input type="text" class="commentInput flex-1 px-2 py-1 border border-gray-300 rounded text-xs" data-key="${key}" placeholder="Add a comment..." maxlength="500">
+                            <button class="submitCommentBtn text-xs px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded" data-key="${key}">Post</button>
+                        </div>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }
+
+    // `setComments(key, comments)` writes the updated comment array back into whatever
+    // local cache (S.user or S.friendProfileData) is backing the current screen.
+    function wireCommentThreads(ownerId, rerender, setComments) {
+        document.querySelectorAll('.toggleCommentsBtn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const key = btn.dataset.key;
+                S.expandedCommentKey = S.expandedCommentKey === key ? null : key;
+                rerender();
+            });
+        });
+        document.querySelectorAll('.submitCommentBtn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const key = btn.dataset.key;
+                const input = document.querySelector(`.commentInput[data-key="${CSS.escape(key)}"]`);
+                const text = input.value.trim();
+                if (!text) return;
+                try {
+                    const path = key === 'profile'
+                        ? `/friends/${ownerId}/profile/comments`
+                        : `/friends/${ownerId}/favorites/${key.slice(4)}/comments`;
+                    const result = await authApi(path, { method: 'POST', body: JSON.stringify({ text }) });
+                    setComments(key, key === 'profile' ? result.profileComments : result.comments);
+                    rerender();
+                } catch (e) {
+                    alert('Could not post comment: ' + e.message);
+                }
+            });
+        });
+        document.querySelectorAll('.deleteCommentBtn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const key = btn.dataset.key;
+                const commentId = btn.dataset.commentId;
+                try {
+                    const path = key === 'profile'
+                        ? `/friends/${ownerId}/profile/comments/${commentId}`
+                        : `/friends/${ownerId}/favorites/${key.slice(4)}/comments/${commentId}`;
+                    const result = await authApi(path, { method: 'DELETE' });
+                    setComments(key, key === 'profile' ? result.profileComments : result.comments);
+                    rerender();
+                } catch (e) {
+                    alert('Could not delete comment: ' + e.message);
+                }
+            });
+        });
+    }
+
     // ---------- ACCOUNT ----------
     function renderAccount() {
         if (!S.authToken) { S.screen = 'home'; render(); return; }
@@ -1638,7 +1777,21 @@
             return;
         }
 
+        if (!S.friendsData) {
+            Promise.all([authApi('/friends'), authApi('/friends/requests'), authApi('/friends/invites')])
+                .then(([friendsRes, reqRes, invRes]) => {
+                    S.friendsData = { friends: friendsRes.friends, incoming: reqRes.incoming, outgoing: reqRes.outgoing, invites: invRes.invites };
+                    render();
+                })
+                .catch(() => {
+                    S.friendsData = { friends: [], incoming: [], outgoing: [], invites: [] };
+                    render();
+                });
+        }
+
         const u = S.user;
+        const fd = S.friendsData || { friends: [], incoming: [], outgoing: [], invites: [] };
+        const visibleFriends = S.friendsShowAll ? fd.friends : fd.friends.slice(0, 3);
         app.innerHTML = `
         <div class="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 p-4 py-10">
             <div class="max-w-lg mx-auto">
@@ -1680,6 +1833,7 @@
                                         <img src="${fav.image}" class="w-full pointer-events-none">
                                     </div>
                                     <button class="removeFavBtn absolute top-1 right-1 w-6 h-6 bg-red-500 hover:bg-red-600 text-white text-xs rounded-full opacity-0 group-hover:opacity-100 transition" data-fav-id="${fav.id}">✕</button>
+                                    ${renderCommentThread(fav.comments || [], `fav:${fav.id}`, u.id)}
                                 </div>
                             `).join('') : `<p class="col-span-3 text-sm text-gray-400 italic">No favorites saved yet — finish a game and save your favorite creature!</p>`}
                         </div>
@@ -1689,6 +1843,66 @@
                                 📥 Download Multiple (<span id="favSelectedCount">0</span>/3 selected)
                             </button>
                         ` : ''}
+                    </div>
+
+                    <div class="mb-6">
+                        <h3 class="text-sm font-semibold text-gray-700 mb-2">💬 Comments on your profile</h3>
+                        ${renderCommentThread(u.profileComments || [], 'profile', u.id)}
+                    </div>
+
+                    ${fd.invites.length ? `
+                        <div class="mb-6">
+                            <h3 class="text-sm font-semibold text-gray-700 mb-2">🎮 Game invites</h3>
+                            <div class="space-y-2">
+                                ${fd.invites.map(inv => `
+                                    <div class="flex items-center justify-between bg-purple-50 rounded-lg px-3 py-2">
+                                        <span class="text-sm text-gray-700">${escapeHtml(inv.fromUsername)} invited you to play</span>
+                                        <div class="flex gap-1 shrink-0">
+                                            <button class="acceptInviteBtn text-xs px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded" data-invite-id="${inv.id}">Join</button>
+                                            <button class="declineInviteBtn text-xs px-2 py-1 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded" data-invite-id="${inv.id}">Decline</button>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    <div class="mb-6">
+                        <h3 class="text-sm font-semibold text-gray-700 mb-2">👥 Friends${fd.friends.length ? ` (${fd.friends.length})` : ''}</h3>
+                        <div class="flex gap-2 mb-2">
+                            <input id="addFriendInput" type="text" placeholder="Add friend by username" class="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg text-sm focus:outline-none focus:border-purple-500">
+                            <button id="addFriendBtn" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-lg">Add</button>
+                        </div>
+                        <p id="addFriendMsg" class="text-xs mb-3"></p>
+
+                        ${fd.incoming.length ? `
+                            <div class="mb-3 space-y-2">
+                                ${fd.incoming.map(r => `
+                                    <div class="flex items-center justify-between bg-purple-50 rounded-lg px-3 py-2">
+                                        <span class="text-sm text-gray-700">${escapeHtml(r.username)} wants to be friends</span>
+                                        <div class="flex gap-1 shrink-0">
+                                            <button class="acceptReqBtn text-xs px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded" data-user-id="${r.userId}">Accept</button>
+                                            <button class="declineReqBtn text-xs px-2 py-1 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded" data-user-id="${r.userId}">Decline</button>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+                        ${fd.outgoing.length ? `<p class="text-xs text-gray-400 mb-3">Pending: ${fd.outgoing.map(r => escapeHtml(r.username)).join(', ')}</p>` : ''}
+
+                        ${fd.friends.length ? `
+                            <div class="grid grid-cols-3 gap-3">
+                                ${visibleFriends.map(f => `
+                                    <div class="friendTile cursor-pointer text-center" data-user-id="${f.id}">
+                                        <div class="w-full aspect-square rounded-lg bg-purple-100 flex items-center justify-center text-xl font-bold text-purple-600 overflow-hidden mb-1">
+                                            ${f.avatarDataUrl ? `<img src="${f.avatarDataUrl}" class="w-full h-full object-cover">` : escapeHtml(f.username.slice(0, 1).toUpperCase())}
+                                        </div>
+                                        <p class="text-xs text-gray-600 truncate">${escapeHtml(f.username)}</p>
+                                    </div>
+                                `).join('')}
+                            </div>
+                            ${fd.friends.length > 3 ? `<button id="toggleFriendsBtn" class="text-xs text-purple-600 hover:underline mt-2">${S.friendsShowAll ? 'Show less' : `See all ${fd.friends.length}`}</button>` : ''}
+                        ` : `<p class="text-sm text-gray-400 italic">No friends yet — add someone by username!</p>`}
                     </div>
 
                     <button id="logoutBtn" class="w-full px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-semibold rounded-lg">Log Out</button>
@@ -1817,6 +2031,195 @@
                 downloadMultipleComposites(images, `exquisite-corpse-favorites-combined.png`);
             });
         }
+
+        wireCommentThreads(u.id, renderAccount, (key, comments) => {
+            if (key === 'profile') u.profileComments = comments;
+            else {
+                const fav = u.favorites.find(f => f.id === key.slice(4));
+                if (fav) fav.comments = comments;
+            }
+        });
+
+        const addFriendBtn = document.getElementById('addFriendBtn');
+        if (addFriendBtn) {
+            addFriendBtn.addEventListener('click', async () => {
+                const input = document.getElementById('addFriendInput');
+                const username = input.value.trim();
+                const msg = document.getElementById('addFriendMsg');
+                if (!username) return;
+                try {
+                    await authApi('/friends/requests', { method: 'POST', body: JSON.stringify({ toUsername: username }) });
+                    S.friendsData = null; // force refetch so the new pending/accepted state shows
+                    renderAccount();
+                } catch (e) {
+                    msg.textContent = e.message;
+                    msg.className = 'text-xs mb-3 text-red-600';
+                }
+            });
+        }
+
+        document.querySelectorAll('.acceptReqBtn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                try {
+                    await authApi(`/friends/requests/${btn.dataset.userId}/accept`, { method: 'POST' });
+                    S.friendsData = null;
+                    renderAccount();
+                } catch (e) {
+                    alert('Could not accept request: ' + e.message);
+                }
+            });
+        });
+
+        document.querySelectorAll('.declineReqBtn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                try {
+                    await authApi(`/friends/requests/${btn.dataset.userId}/decline`, { method: 'POST' });
+                    S.friendsData = null;
+                    renderAccount();
+                } catch (e) {
+                    alert('Could not decline request: ' + e.message);
+                }
+            });
+        });
+
+        document.querySelectorAll('.acceptInviteBtn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                try {
+                    const data = await authApi(`/friends/invites/${btn.dataset.inviteId}/accept`, { method: 'POST' });
+                    S.code = data.code;
+                    S.playerId = data.playerId;
+                    S.game = data;
+                    sessionStorage.setItem('ec_code', S.code);
+                    sessionStorage.setItem('ec_playerId', S.playerId);
+                    S.screen = 'lobby';
+                    render();
+                    startPolling();
+                } catch (e) {
+                    alert('Could not join game: ' + e.message);
+                    S.friendsData = null;
+                    renderAccount();
+                }
+            });
+        });
+
+        document.querySelectorAll('.declineInviteBtn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                try {
+                    await authApi(`/friends/invites/${btn.dataset.inviteId}/decline`, { method: 'POST' });
+                    S.friendsData = null;
+                    renderAccount();
+                } catch (e) {
+                    alert('Could not decline invite: ' + e.message);
+                }
+            });
+        });
+
+        const toggleFriendsBtn = document.getElementById('toggleFriendsBtn');
+        if (toggleFriendsBtn) {
+            toggleFriendsBtn.addEventListener('click', () => {
+                S.friendsShowAll = !S.friendsShowAll;
+                renderAccount();
+            });
+        }
+
+        document.querySelectorAll('.friendTile').forEach(tile => {
+            tile.addEventListener('click', () => {
+                S.friendProfileUserId = tile.dataset.userId;
+                S.friendProfileData = null;
+                S.expandedCommentKey = null;
+                S.screen = 'friendProfile';
+                render();
+            });
+        });
+    }
+
+    // ---------- FRIEND PROFILE ----------
+    function renderFriendProfile() {
+        if (!S.authToken) { S.screen = 'home'; render(); return; }
+
+        if (!S.friendProfileData) {
+            app.innerHTML = `<div class="min-h-screen flex items-center justify-center text-gray-400">Loading profile...</div>`;
+            authApi(`/friends/${S.friendProfileUserId}/profile`)
+                .then(profile => { S.friendProfileData = profile; render(); })
+                .catch(e => {
+                    alert('Could not load profile: ' + e.message);
+                    S.screen = 'account';
+                    render();
+                });
+            return;
+        }
+
+        const p = S.friendProfileData;
+        app.innerHTML = `
+        <div class="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 p-4 py-10">
+            <div class="max-w-lg mx-auto">
+                <button id="backAccountBtn" class="text-sm text-gray-400 hover:text-gray-600 mb-4">&larr; Back to your account</button>
+                <div class="bg-white rounded-2xl shadow-lg p-8">
+                    <div class="flex items-center gap-4 mb-2">
+                        <div class="w-16 h-16 rounded-full bg-purple-100 flex items-center justify-center text-2xl font-bold text-purple-600 overflow-hidden">
+                            ${p.avatarDataUrl ? `<img src="${p.avatarDataUrl}" class="w-full h-full object-cover">` : escapeHtml(p.username.slice(0, 1).toUpperCase())}
+                        </div>
+                        <h1 class="text-xl font-bold text-gray-900 flex-1">${escapeHtml(p.username)}</h1>
+                    </div>
+                    <button id="inviteToGameBtn" class="w-full mb-6 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-semibold text-sm rounded-xl">
+                        🎮 Start a game with ${escapeHtml(p.username)}
+                    </button>
+
+                    <div class="mb-6">
+                        <h3 class="text-sm font-semibold text-gray-700 mb-2">💬 Comments</h3>
+                        ${renderCommentThread(p.profileComments || [], 'profile', p.id)}
+                    </div>
+
+                    <div class="mb-6">
+                        <h3 class="text-sm font-semibold text-gray-700 mb-2">⭐ Favorites (${p.favorites.length})</h3>
+                        <div class="grid grid-cols-3 gap-3">
+                            ${p.favorites.length > 0 ? p.favorites.map(fav => `
+                                <div class="relative">
+                                    <div class="rounded-lg overflow-hidden border-2 border-gray-200">
+                                        <img src="${fav.image}" class="w-full">
+                                    </div>
+                                    ${renderCommentThread(fav.comments || [], `fav:${fav.id}`, p.id)}
+                                </div>
+                            `).join('') : `<p class="col-span-3 text-sm text-gray-400 italic">No favorites saved yet.</p>`}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+
+        document.getElementById('backAccountBtn').addEventListener('click', () => {
+            S.screen = 'account';
+            render();
+        });
+
+        document.getElementById('inviteToGameBtn').addEventListener('click', async (e) => {
+            const btn = e.currentTarget;
+            btn.disabled = true;
+            btn.textContent = 'Starting game...';
+            try {
+                const code = await createGame('async', null, 2);
+                await joinGame(code, S.user.username);
+                await authApi(`/games/${code}/invite`, {
+                    method: 'POST',
+                    body: JSON.stringify({ playerId: S.playerId, friendUserId: p.id }),
+                });
+                S.screen = 'lobby';
+                render();
+                startPolling();
+            } catch (err) {
+                alert('Could not start game: ' + err.message);
+                btn.disabled = false;
+                btn.textContent = `🎮 Start a game with ${p.username}`;
+            }
+        });
+
+        wireCommentThreads(p.id, renderFriendProfile, (key, comments) => {
+            if (key === 'profile') p.profileComments = comments;
+            else {
+                const fav = p.favorites.find(f => f.id === key.slice(4));
+                if (fav) fav.comments = comments;
+            }
+        });
     }
 
     // ================= BOOT =================
@@ -1830,7 +2233,10 @@
 
         // Pre-fetch account state in the background so the home screen's auth
         // badge is correct immediately, even after a hard page reload
-        if (S.authToken) refreshMe().then(() => { if (S.screen === 'home') render(); });
+        if (S.authToken) {
+            refreshMe().then(() => { if (S.screen === 'home') render(); });
+            startFriendsPolling();
+        }
 
         if (S.code && S.playerId) {
             try {

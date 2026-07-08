@@ -10,6 +10,9 @@ function serializeUser(user) {
     paid: user.paid,
     favorites: user.favorites,
     favoritesCount: user.favorites.length,
+    friendsCount: user.friends.length,
+    pendingRequestsReceived: user.friendRequestsReceived.length,
+    profileComments: user.profileComments,
   };
 }
 

@@ -29,10 +29,27 @@ if (!fs.existsSync(USERS_FILE)) {
   fs.writeFileSync(USERS_FILE, JSON.stringify({ users: [] }, null, 2));
 }
 
+// Backfills fields added after a user's account was created, so older
+// records don't need a one-time migration script.
+function normalizeUser(user) {
+  if (!user.friends) user.friends = [];
+  if (!user.friendRequestsSent) user.friendRequestsSent = [];
+  if (!user.friendRequestsReceived) user.friendRequestsReceived = [];
+  if (!user.gamesPlayedWith) user.gamesPlayedWith = {};
+  if (!user.profileComments) user.profileComments = [];
+  if (!user.gameInvites) user.gameInvites = [];
+  if (Array.isArray(user.favorites)) {
+    user.favorites.forEach(f => { if (!f.comments) f.comments = []; });
+  }
+  return user;
+}
+
 function readUsers() {
   try {
     const data = fs.readFileSync(USERS_FILE, 'utf-8');
-    return JSON.parse(data);
+    const parsed = JSON.parse(data);
+    parsed.users.forEach(normalizeUser);
+    return parsed;
   } catch (err) {
     console.error('Error reading users.json:', err);
     return { users: [] };
@@ -104,6 +121,7 @@ exports.createUser = (email, username, passwordHash, passwordSalt, stripeCustome
       createdAt: Date.now(),
       favorites: [],
     };
+    normalizeUser(user);
 
     data.users.push(user);
     return writeUsers(data).then(() => user);
@@ -172,3 +190,183 @@ exports.getUserByCheckoutSessionId = (sessionId) => {
 // Mark session ID on a pending user (before payment confirmed)
 // In this design, pending users don't exist on disk until webhook fires
 // So this is mainly for Stripe metadata storage; webhook creates the user
+
+// ===== Friends =====
+
+exports.sendFriendRequest = (fromUserId, toUsername) => {
+  return queue(() => {
+    const data = readUsers();
+    const fromUser = data.users.find(u => u.id === fromUserId);
+    if (!fromUser) throw new Error('User not found');
+    const toUser = data.users.find(u => u.username.toLowerCase() === toUsername.toLowerCase());
+    if (!toUser) throw new Error('No user with that username');
+    if (toUser.id === fromUserId) throw new Error('Cannot friend yourself');
+    if (fromUser.friends.some(f => f.userId === toUser.id)) throw new Error('Already friends');
+    if (fromUser.friendRequestsSent.some(r => r.userId === toUser.id)) throw new Error('Request already sent');
+
+    // Crossing requests: the other person already requested us — auto-accept instead of erroring.
+    const crossingIdx = fromUser.friendRequestsReceived.findIndex(r => r.userId === toUser.id);
+    if (crossingIdx !== -1) {
+      const since = Date.now();
+      fromUser.friendRequestsReceived.splice(crossingIdx, 1);
+      toUser.friendRequestsSent = toUser.friendRequestsSent.filter(r => r.userId !== fromUserId);
+      fromUser.friends.push({ userId: toUser.id, since });
+      toUser.friends.push({ userId: fromUserId, since });
+      return writeUsers(data).then(() => ({ user: fromUser, autoAccepted: true }));
+    }
+
+    const sentAt = Date.now();
+    fromUser.friendRequestsSent.push({ userId: toUser.id, sentAt });
+    toUser.friendRequestsReceived.push({ userId: fromUserId, sentAt });
+    return writeUsers(data).then(() => ({ user: fromUser, autoAccepted: false }));
+  });
+};
+
+exports.acceptFriendRequest = (userId, otherUserId) => {
+  return queue(() => {
+    const data = readUsers();
+    const user = data.users.find(u => u.id === userId);
+    const other = data.users.find(u => u.id === otherUserId);
+    if (!user) throw new Error('User not found');
+    const idx = user.friendRequestsReceived.findIndex(r => r.userId === otherUserId);
+    if (idx === -1) throw new Error('No pending request from this user');
+    const since = Date.now();
+    user.friendRequestsReceived.splice(idx, 1);
+    user.friends.push({ userId: otherUserId, since });
+    if (other) {
+      other.friendRequestsSent = other.friendRequestsSent.filter(r => r.userId !== userId);
+      other.friends.push({ userId, since });
+    }
+    return writeUsers(data).then(() => user);
+  });
+};
+
+exports.declineFriendRequest = (userId, otherUserId) => {
+  return queue(() => {
+    const data = readUsers();
+    const user = data.users.find(u => u.id === userId);
+    const other = data.users.find(u => u.id === otherUserId);
+    if (!user) throw new Error('User not found');
+    const before = user.friendRequestsReceived.length;
+    user.friendRequestsReceived = user.friendRequestsReceived.filter(r => r.userId !== otherUserId);
+    if (user.friendRequestsReceived.length === before) throw new Error('No pending request from this user');
+    if (other) other.friendRequestsSent = other.friendRequestsSent.filter(r => r.userId !== userId);
+    return writeUsers(data).then(() => user);
+  });
+};
+
+exports.removeFriend = (userId, otherUserId) => {
+  return queue(() => {
+    const data = readUsers();
+    const user = data.users.find(u => u.id === userId);
+    const other = data.users.find(u => u.id === otherUserId);
+    if (!user) throw new Error('User not found');
+    user.friends = user.friends.filter(f => f.userId !== otherUserId);
+    if (other) other.friends = other.friends.filter(f => f.userId !== userId);
+    return writeUsers(data).then(() => user);
+  });
+};
+
+exports.areFriends = (userId, otherUserId) => {
+  const { users } = readUsers();
+  const user = users.find(u => u.id === userId);
+  if (!user) return false;
+  return user.friends.some(f => f.userId === otherUserId);
+};
+
+exports.recordGamesPlayedTogether = (userIds) => {
+  const unique = [...new Set(userIds.filter(Boolean))];
+  if (unique.length < 2) return Promise.resolve();
+  return queue(() => {
+    const data = readUsers();
+    for (let i = 0; i < unique.length; i++) {
+      for (let j = i + 1; j < unique.length; j++) {
+        const a = data.users.find(u => u.id === unique[i]);
+        const b = data.users.find(u => u.id === unique[j]);
+        if (!a || !b) continue;
+        a.gamesPlayedWith[unique[j]] = (a.gamesPlayedWith[unique[j]] || 0) + 1;
+        b.gamesPlayedWith[unique[i]] = (b.gamesPlayedWith[unique[i]] || 0) + 1;
+      }
+    }
+    return writeUsers(data);
+  });
+};
+
+// ===== Comments (favorites + profile) =====
+
+exports.addFavoriteComment = (ownerId, favoriteId, authorId, authorUsername, text) => {
+  return queue(() => {
+    const data = readUsers();
+    const owner = data.users.find(u => u.id === ownerId);
+    if (!owner) throw new Error('User not found');
+    const favorite = owner.favorites.find(f => f.id === favoriteId);
+    if (!favorite) throw new Error('Favorite not found');
+    const comment = { id: crypto.randomUUID(), authorId, authorUsername, text, createdAt: Date.now() };
+    favorite.comments.push(comment);
+    return writeUsers(data).then(() => ({ owner, favorite, comment }));
+  });
+};
+
+exports.removeFavoriteComment = (ownerId, favoriteId, commentId) => {
+  return queue(() => {
+    const data = readUsers();
+    const owner = data.users.find(u => u.id === ownerId);
+    if (!owner) throw new Error('User not found');
+    const favorite = owner.favorites.find(f => f.id === favoriteId);
+    if (!favorite) throw new Error('Favorite not found');
+    favorite.comments = favorite.comments.filter(c => c.id !== commentId);
+    return writeUsers(data).then(() => favorite);
+  });
+};
+
+exports.addProfileComment = (ownerId, authorId, authorUsername, text) => {
+  return queue(() => {
+    const data = readUsers();
+    const owner = data.users.find(u => u.id === ownerId);
+    if (!owner) throw new Error('User not found');
+    const comment = { id: crypto.randomUUID(), authorId, authorUsername, text, createdAt: Date.now() };
+    owner.profileComments.push(comment);
+    return writeUsers(data).then(() => ({ owner, comment }));
+  });
+};
+
+exports.removeProfileComment = (ownerId, commentId) => {
+  return queue(() => {
+    const data = readUsers();
+    const owner = data.users.find(u => u.id === ownerId);
+    if (!owner) throw new Error('User not found');
+    owner.profileComments = owner.profileComments.filter(c => c.id !== commentId);
+    return writeUsers(data).then(() => owner);
+  });
+};
+
+// ===== Game invites =====
+
+exports.addGameInvite = (toUserId, gameCode, fromUserId, fromUsername) => {
+  return queue(() => {
+    const data = readUsers();
+    const toUser = data.users.find(u => u.id === toUserId);
+    if (!toUser) throw new Error('User not found');
+    const invite = { id: crypto.randomUUID(), gameCode, fromUserId, fromUsername, createdAt: Date.now() };
+    toUser.gameInvites.push(invite);
+    return writeUsers(data).then(() => invite);
+  });
+};
+
+exports.removeGameInvite = (userId, inviteId) => {
+  return queue(() => {
+    const data = readUsers();
+    const user = data.users.find(u => u.id === userId);
+    if (!user) throw new Error('User not found');
+    const invite = user.gameInvites.find(i => i.id === inviteId) || null;
+    user.gameInvites = user.gameInvites.filter(i => i.id !== inviteId);
+    return writeUsers(data).then(() => invite);
+  });
+};
+
+exports.getGameInvite = (userId, inviteId) => {
+  const { users } = readUsers();
+  const user = users.find(u => u.id === userId);
+  if (!user) return null;
+  return user.gameInvites.find(i => i.id === inviteId) || null;
+};
