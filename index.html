@@ -338,7 +338,7 @@
                 <div class="bg-white rounded-2xl shadow-2xl p-8">
                     <div class="text-center mb-6">
                         <h1 class="text-4xl font-bold text-gray-900 mb-2">🎨 Exquisite Corpse</h1>
-                        <p class="text-gray-600">2-10 artists. A creature each. Zero spoilers.</p>
+                        <p class="text-gray-600">2-20 artists. A creature each. Zero spoilers.</p>
                     </div>
 
                     ${S.error ? `<div class="mb-4 p-3 bg-red-50 border border-red-300 text-red-700 rounded-lg text-sm">${S.error}</div>` : ''}
@@ -376,7 +376,7 @@
 
                         <div class="mb-3">
                             <label class="block text-xs font-medium text-gray-500 mb-1">Number of artists: <b><span id="playerCountValue">3</span></b></label>
-                            <input id="playerCountSlider" type="range" min="2" max="10" value="3" class="w-full">
+                            <input id="playerCountSlider" type="range" min="2" max="20" value="3" class="w-full">
                             <p id="playerCountHint" class="text-xs text-gray-500 mt-1.5">Everyone draws every round — more artists means more creatures, not a longer game.</p>
                         </div>
 
@@ -1062,10 +1062,11 @@
                 <div class="grid gap-6 ${gridCols} ${gridMaxW} mx-auto">
                     ${sheets.map((sheet, si) => `
                     <div class="bg-white rounded-2xl shadow-2xl p-4">
-                        <div class="rounded-lg overflow-hidden border-2 border-gray-200">
+                        <div class="relative rounded-lg overflow-hidden border-2 border-gray-200 cursor-pointer combineSelectArea transition" data-sheet="${si}" title="Tap to select for combining">
+                            <div class="combineOrderBadge hidden absolute top-2 left-2 z-10 w-7 h-7 rounded-full bg-purple-600 text-white text-sm font-bold items-center justify-center shadow-lg">1</div>
                             ${sheet.sections.map((sec, i) => `
                                 <div class="fade-in" style="animation-delay:${(si * 0.3 + i * 0.8)}s">
-                                    <img src="${sec.image}" class="block w-full" style="margin-top:-1px">
+                                    <img src="${sec.image}" class="block w-full pointer-events-none" style="margin-top:-1px">
                                 </div>
                             `).join('')}
                         </div>
@@ -1074,9 +1075,14 @@
                                 <p><b>${SECTION_LABELS[sec.section]}:</b> ${sec.artist || '?'}${sec.inspiration ? ` <span class="italic text-purple-400 capitalize">— ${sec.inspiration}</span>` : ''}</p>
                             `).join('')}
                         </div>
-                        <button class="downloadBtn mt-3 w-full px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-lg" data-sheet="${si}">
-                            📥 Download
-                        </button>
+                        <div class="grid grid-cols-2 gap-2 mt-3">
+                            <button class="downloadBtn px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-lg" data-sheet="${si}">
+                                📥 Download
+                            </button>
+                            <button class="downloadSocialBtn px-3 py-2 bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold rounded-lg" data-sheet="${si}">
+                                📱 Share
+                            </button>
+                        </div>
                         ${S.authToken && S.user ? `
                             <button class="saveFavBtn mt-2 w-full px-3 py-2 bg-yellow-100 hover:bg-yellow-200 text-yellow-800 text-sm font-semibold rounded-lg"
                                 data-sheet="${si}" ${savedFavoriteKeys.has(`${g.code}-${si}`) || S.user.favoritesCount >= MAX_FAVORITES ? 'disabled' : ''}>
@@ -1090,6 +1096,15 @@
                     </div>
                     `).join('')}
                 </div>
+
+                ${sheets.length >= 2 ? `
+                <div class="max-w-md mx-auto mt-6 text-center">
+                    <p class="text-white/90 text-sm mb-2">Tap up to 3 creatures above to combine them onto one sheet</p>
+                    <button id="downloadMultipleBtn" class="w-full px-4 py-3 bg-white/20 text-white/50 font-semibold rounded-xl border border-white/40 cursor-not-allowed" disabled>
+                        📥 Download Multiple (<span id="selectedCount">0</span>/3 selected)
+                    </button>
+                </div>
+                ` : ''}
 
                 <div class="mt-8 max-w-md mx-auto space-y-3">
                     <button id="shareBtn" class="w-full px-4 py-3 bg-white/20 hover:bg-white/30 text-white font-semibold rounded-xl border border-white/40">
@@ -1105,6 +1120,59 @@
         document.querySelectorAll('.downloadBtn').forEach(btn => {
             btn.addEventListener('click', () => downloadSheet(sheets[Number(btn.dataset.sheet)], Number(btn.dataset.sheet) + 1));
         });
+        document.querySelectorAll('.downloadSocialBtn').forEach(btn => {
+            btn.addEventListener('click', () => downloadSheetSocial(sheets[Number(btn.dataset.sheet)], Number(btn.dataset.sheet) + 1));
+        });
+
+        // Combine-selection: tap a creature card to select it (up to 3, in click order)
+        let selectedForCombine = [];
+        function updateCombineSelectionUI() {
+            document.querySelectorAll('.combineSelectArea').forEach(area => {
+                const si = Number(area.dataset.sheet);
+                const idx = selectedForCombine.indexOf(si);
+                const badge = area.querySelector('.combineOrderBadge');
+                if (idx !== -1) {
+                    area.classList.add('ring-4', 'ring-purple-500');
+                    badge.classList.remove('hidden');
+                    badge.classList.add('flex');
+                    badge.textContent = idx + 1;
+                } else {
+                    area.classList.remove('ring-4', 'ring-purple-500');
+                    badge.classList.add('hidden');
+                    badge.classList.remove('flex');
+                }
+            });
+            const countEl = document.getElementById('selectedCount');
+            const combineBtn = document.getElementById('downloadMultipleBtn');
+            if (countEl) countEl.textContent = selectedForCombine.length;
+            if (combineBtn) {
+                const enabled = selectedForCombine.length >= 2;
+                combineBtn.disabled = !enabled;
+                combineBtn.className = `w-full px-4 py-3 font-semibold rounded-xl border ${enabled ? 'bg-white text-purple-700 border-white hover:bg-purple-50 cursor-pointer' : 'bg-white/20 text-white/50 border-white/40 cursor-not-allowed'}`;
+            }
+        }
+        document.querySelectorAll('.combineSelectArea').forEach(area => {
+            area.addEventListener('click', () => {
+                const si = Number(area.dataset.sheet);
+                const idx = selectedForCombine.indexOf(si);
+                if (idx !== -1) {
+                    selectedForCombine.splice(idx, 1);
+                } else if (selectedForCombine.length < 3) {
+                    selectedForCombine.push(si);
+                } else {
+                    return; // already have 3 selected
+                }
+                updateCombineSelectionUI();
+            });
+        });
+        const downloadMultipleBtn = document.getElementById('downloadMultipleBtn');
+        if (downloadMultipleBtn) {
+            downloadMultipleBtn.addEventListener('click', () => {
+                if (selectedForCombine.length < 2) return;
+                downloadMultipleSheets(selectedForCombine.map(i => sheets[i]));
+            });
+        }
+
         document.querySelectorAll('.saveFavBtn').forEach(btn => {
             btn.addEventListener('click', () => {
                 const si = Number(btn.dataset.sheet);
@@ -1189,6 +1257,117 @@
                 const a = document.createElement('a');
                 a.href = pageDataUrl;
                 a.download = `exquisite-corpse-${S.code || 'game'}-${num}.png`;
+                a.click();
+            });
+    }
+
+    // Square social export. The tall 3-section strip would leave big blank
+    // margins in a plain square frame, so instead of white we use a branded
+    // gradient background with a white "card" behind the art and a small
+    // watermark — turns the mismatch into a deliberate, shareable look.
+    function fitToSocialSquare(compositeDataUrl) {
+        const SIZE = 1080, PADDING = 60, TEXT_AREA_H = 110;
+        return new Promise((resolve) => {
+            const page = document.createElement('canvas');
+            page.width = SIZE;
+            page.height = SIZE;
+            const ctx = page.getContext('2d');
+
+            const grad = ctx.createLinearGradient(0, 0, SIZE, SIZE);
+            grad.addColorStop(0, '#9333ea');
+            grad.addColorStop(0.5, '#ec4899');
+            grad.addColorStop(1, '#3b82f6');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, SIZE, SIZE);
+
+            const availW = SIZE - PADDING * 2;
+            const availH = SIZE - PADDING * 2 - TEXT_AREA_H;
+
+            const img = new Image();
+            img.onload = () => {
+                const scale = Math.min(availW / img.width, availH / img.height);
+                const w = img.width * scale, h = img.height * scale;
+                const x = (SIZE - w) / 2;
+                const y = PADDING + (availH - h) / 2;
+
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(x - 16, y - 16, w + 32, h + 32);
+                ctx.drawImage(img, x, y, w, h);
+
+                ctx.fillStyle = '#ffffff';
+                ctx.textAlign = 'center';
+                ctx.font = 'bold 30px sans-serif';
+                ctx.fillText('🎨 Made with Exquisite Corpse', SIZE / 2, SIZE - 55);
+                ctx.font = '24px sans-serif';
+                ctx.fillText('ecdraw.art', SIZE / 2, SIZE - 20);
+
+                resolve(page.toDataURL('image/png'));
+            };
+            img.src = compositeDataUrl;
+        });
+    }
+
+    function downloadSheetSocial(sheet, num) {
+        stitchSheetDataUrl(sheet)
+            .then(dataUrl => fitToSocialSquare(dataUrl))
+            .then(pageDataUrl => {
+                const a = document.createElement('a');
+                a.href = pageDataUrl;
+                a.download = `exquisite-corpse-${S.code || 'game'}-${num}-social.png`;
+                a.click();
+            });
+    }
+
+    // Combines up to 3 already-stitched composite images side-by-side, then
+    // fits the result onto the same 8.5x11 page used for single downloads —
+    // 3 side-by-side panels happen to closely match the page's own aspect
+    // ratio, so this fits almost edge-to-edge. Shared by both the results
+    // screen (sheets need stitching first) and favorites (already stitched).
+    function combineCompositesRaw(compositeDataUrls) {
+        return new Promise((resolve) => {
+            const combined = document.createElement('canvas');
+            combined.width = OUTPUT_W * compositeDataUrls.length;
+            combined.height = OUTPUT_H * 3;
+            const ctx = combined.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, combined.width, combined.height);
+
+            let loaded = 0;
+            compositeDataUrls.forEach((dataUrl, i) => {
+                const img = new Image();
+                img.onload = () => {
+                    ctx.drawImage(img, i * OUTPUT_W, 0, OUTPUT_W, OUTPUT_H * 3);
+                    loaded++;
+                    if (loaded === compositeDataUrls.length) resolve(combined.toDataURL('image/png'));
+                };
+                img.src = dataUrl;
+            });
+        });
+    }
+
+    function combineSheetsRaw(sheetsToCombine) {
+        return Promise.all(sheetsToCombine.map(s => stitchSheetDataUrl(s))).then(composites => combineCompositesRaw(composites));
+    }
+
+    function downloadMultipleSheets(sheetsToCombine) {
+        combineSheetsRaw(sheetsToCombine)
+            .then(rawDataUrl => fitToLetterPage(rawDataUrl))
+            .then(pageDataUrl => {
+                const a = document.createElement('a');
+                a.href = pageDataUrl;
+                a.download = `exquisite-corpse-${S.code || 'game'}-combined.png`;
+                a.click();
+            });
+    }
+
+    // Same combine flow, but for pre-stitched favorite images (no re-stitch needed)
+    function downloadMultipleComposites(compositeDataUrls, filename) {
+        combineCompositesRaw(compositeDataUrls)
+            .then(rawDataUrl => fitToLetterPage(rawDataUrl))
+            .then(pageDataUrl => {
+                const a = document.createElement('a');
+                a.href = pageDataUrl;
+                a.download = filename;
                 a.click();
             });
     }
@@ -1496,11 +1675,20 @@
                         <div class="grid grid-cols-3 gap-3">
                             ${u.favorites.length > 0 ? u.favorites.map(fav => `
                                 <div class="relative group">
-                                    <img src="${fav.image}" class="w-full rounded-lg border-2 border-gray-200">
+                                    <div class="relative rounded-lg overflow-hidden border-2 border-gray-200 cursor-pointer favSelectArea transition" data-fav-id="${fav.id}" title="Tap to select for combining">
+                                        <div class="favOrderBadge hidden absolute top-1 left-1 z-10 w-6 h-6 rounded-full bg-purple-600 text-white text-xs font-bold items-center justify-center shadow-lg">1</div>
+                                        <img src="${fav.image}" class="w-full pointer-events-none">
+                                    </div>
                                     <button class="removeFavBtn absolute top-1 right-1 w-6 h-6 bg-red-500 hover:bg-red-600 text-white text-xs rounded-full opacity-0 group-hover:opacity-100 transition" data-fav-id="${fav.id}">✕</button>
                                 </div>
                             `).join('') : `<p class="col-span-3 text-sm text-gray-400 italic">No favorites saved yet — finish a game and save your favorite creature!</p>`}
                         </div>
+                        ${u.favorites.length >= 2 ? `
+                            <p class="text-xs text-gray-500 mt-3 mb-1.5 text-center">Tap up to 3 favorites to combine them onto one printable sheet</p>
+                            <button id="downloadMultipleFavBtn" class="w-full px-4 py-2.5 bg-gray-100 text-gray-400 font-semibold text-sm rounded-xl border border-gray-200 cursor-not-allowed" disabled>
+                                📥 Download Multiple (<span id="favSelectedCount">0</span>/3 selected)
+                            </button>
+                        ` : ''}
                     </div>
 
                     <button id="logoutBtn" class="w-full px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-semibold rounded-lg">Log Out</button>
@@ -1579,6 +1767,56 @@
                 }
             });
         });
+
+        // Combine-selection for favorites (same pattern as the results screen)
+        let selectedFavIds = [];
+        function updateFavSelectionUI() {
+            document.querySelectorAll('.favSelectArea').forEach(area => {
+                const favId = area.dataset.favId;
+                const idx = selectedFavIds.indexOf(favId);
+                const badge = area.querySelector('.favOrderBadge');
+                if (idx !== -1) {
+                    area.classList.add('ring-4', 'ring-purple-500');
+                    badge.classList.remove('hidden');
+                    badge.classList.add('flex');
+                    badge.textContent = idx + 1;
+                } else {
+                    area.classList.remove('ring-4', 'ring-purple-500');
+                    badge.classList.add('hidden');
+                    badge.classList.remove('flex');
+                }
+            });
+            const countEl = document.getElementById('favSelectedCount');
+            const combineBtn = document.getElementById('downloadMultipleFavBtn');
+            if (countEl) countEl.textContent = selectedFavIds.length;
+            if (combineBtn) {
+                const enabled = selectedFavIds.length >= 2;
+                combineBtn.disabled = !enabled;
+                combineBtn.className = `w-full px-4 py-2.5 font-semibold text-sm rounded-xl border ${enabled ? 'bg-purple-600 hover:bg-purple-700 text-white border-purple-600 cursor-pointer' : 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'}`;
+            }
+        }
+        document.querySelectorAll('.favSelectArea').forEach(area => {
+            area.addEventListener('click', () => {
+                const favId = area.dataset.favId;
+                const idx = selectedFavIds.indexOf(favId);
+                if (idx !== -1) {
+                    selectedFavIds.splice(idx, 1);
+                } else if (selectedFavIds.length < 3) {
+                    selectedFavIds.push(favId);
+                } else {
+                    return;
+                }
+                updateFavSelectionUI();
+            });
+        });
+        const downloadMultipleFavBtn = document.getElementById('downloadMultipleFavBtn');
+        if (downloadMultipleFavBtn) {
+            downloadMultipleFavBtn.addEventListener('click', () => {
+                if (selectedFavIds.length < 2) return;
+                const images = selectedFavIds.map(id => u.favorites.find(f => f.id === id).image);
+                downloadMultipleComposites(images, `exquisite-corpse-favorites-combined.png`);
+            });
+        }
     }
 
     // ================= BOOT =================

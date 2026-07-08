@@ -309,7 +309,7 @@ function handleApi(req, res, url) {
       if (err) return json(res, 400, { error: err.message });
       const mode = body.mode === 'timed' ? 'timed' : 'async';
       const timePerTurn = mode === 'timed' ? Math.min(10, Math.max(1, Number(body.timePerTurn) || 3)) : null;
-      const maxPlayers = Math.min(10, Math.max(2, Number(body.maxPlayers) || 3)); // 2-10 players
+      const maxPlayers = Math.min(20, Math.max(2, Number(body.maxPlayers) || 3)); // 2-20 players (classroom-sized groups)
       const code = generateCode();
       games.set(code, {
         code,
