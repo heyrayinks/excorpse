@@ -1158,13 +1158,40 @@
         });
     }
 
-    function downloadSheet(sheet, num) {
-        stitchSheetDataUrl(sheet).then(dataUrl => {
-            const a = document.createElement('a');
-            a.href = dataUrl;
-            a.download = `exquisite-corpse-${S.code || 'game'}-${num}.png`;
-            a.click();
+    // Shrinks the tall 3-section strip to fit within a standard 8.5x11 page
+    // (at the same 300 DPI as OUTPUT_W/H, so a single page is exactly that
+    // size) and centers it, leaving white margins rather than a page-shaped
+    // file with an oddly narrow, un-printable strip of content.
+    function fitToLetterPage(compositeDataUrl) {
+        return new Promise((resolve) => {
+            const page = document.createElement('canvas');
+            page.width = OUTPUT_W;
+            page.height = OUTPUT_H;
+            const ctx = page.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, OUTPUT_W, OUTPUT_H);
+
+            const img = new Image();
+            img.onload = () => {
+                const scale = Math.min(OUTPUT_W / img.width, OUTPUT_H / img.height);
+                const w = img.width * scale;
+                const h = img.height * scale;
+                ctx.drawImage(img, (OUTPUT_W - w) / 2, (OUTPUT_H - h) / 2, w, h);
+                resolve(page.toDataURL('image/png'));
+            };
+            img.src = compositeDataUrl;
         });
+    }
+
+    function downloadSheet(sheet, num) {
+        stitchSheetDataUrl(sheet)
+            .then(dataUrl => fitToLetterPage(dataUrl))
+            .then(pageDataUrl => {
+                const a = document.createElement('a');
+                a.href = pageDataUrl;
+                a.download = `exquisite-corpse-${S.code || 'game'}-${num}.png`;
+                a.click();
+            });
     }
 
     // Saved-this-session tracker (avoids double-saving the same sheet on re-render)
