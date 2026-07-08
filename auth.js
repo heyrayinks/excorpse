@@ -86,14 +86,16 @@ exports.extractAndVerifyToken = (req) => {
   return userId;
 };
 
-// Login endpoint logic
+// Login endpoint logic — accepts either email or username as the identifier,
+// since that's what most people expect and mistyping one for the other
+// (or browser autofill mixing them up) shouldn't produce a confusing failure.
 exports.handleLogin = async (body) => {
   const { email, password } = body;
   if (!email || !password) {
     throw { status: 400, error: 'Email and password required' };
   }
 
-  const user = data.getUserByEmail(email);
+  const user = data.getUserByEmail(email) || data.getUserByUsername(email);
   if (!user) {
     throw { status: 401, error: 'Invalid credentials' };
   }
