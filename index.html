@@ -1242,10 +1242,13 @@
                 </div>
 
                 ${sheets.length >= 2 ? `
-                <div class="max-w-md mx-auto mt-6 text-center">
+                <div class="max-w-md mx-auto mt-6 text-center space-y-2">
                     <p class="text-white/90 text-sm mb-2">Tap up to 3 creatures above to combine them onto one sheet</p>
                     <button id="downloadMultipleBtn" class="w-full px-4 py-3 bg-white/20 text-white/50 font-semibold rounded-xl border border-white/40 cursor-not-allowed" disabled>
                         📥 Download Multiple (<span id="selectedCount">0</span>/3 selected)
+                    </button>
+                    <button id="shareMultipleBtn" class="w-full px-4 py-3 bg-white/20 text-white/50 font-semibold rounded-xl border border-white/40 cursor-not-allowed" disabled>
+                        📱 Share 2 Together (select exactly 2)
                     </button>
                 </div>
                 ` : ''}
@@ -1294,6 +1297,13 @@
                 combineBtn.disabled = !enabled;
                 combineBtn.className = `w-full px-4 py-3 font-semibold rounded-xl border ${enabled ? 'bg-white text-purple-700 border-white hover:bg-purple-50 cursor-pointer' : 'bg-white/20 text-white/50 border-white/40 cursor-not-allowed'}`;
             }
+            const shareBtn2 = document.getElementById('shareMultipleBtn');
+            if (shareBtn2) {
+                const enabled = selectedForCombine.length === 2;
+                shareBtn2.disabled = !enabled;
+                shareBtn2.textContent = enabled ? '📱 Share 2 Together' : '📱 Share 2 Together (select exactly 2)';
+                shareBtn2.className = `w-full px-4 py-3 font-semibold rounded-xl border ${enabled ? 'bg-white text-purple-700 border-white hover:bg-purple-50 cursor-pointer' : 'bg-white/20 text-white/50 border-white/40 cursor-not-allowed'}`;
+            }
         }
         document.querySelectorAll('.combineSelectArea').forEach(area => {
             area.addEventListener('click', () => {
@@ -1314,6 +1324,13 @@
             downloadMultipleBtn.addEventListener('click', () => {
                 if (selectedForCombine.length < 2) return;
                 downloadMultipleSheets(selectedForCombine.map(i => sheets[i]));
+            });
+        }
+        const shareMultipleBtn = document.getElementById('shareMultipleBtn');
+        if (shareMultipleBtn) {
+            shareMultipleBtn.addEventListener('click', () => {
+                if (selectedForCombine.length !== 2) return;
+                downloadMultipleSheetsSocial(selectedForCombine.map(i => sheets[i]));
             });
         }
 
@@ -1405,23 +1422,18 @@
             });
     }
 
-    // Square social export. The tall 3-section strip would leave big blank
-    // margins in a plain square frame, so instead of white we use a branded
-    // gradient background with a white "card" behind the art and a small
-    // watermark — turns the mismatch into a deliberate, shareable look.
+    // Square social export. The tall 3-section strip would leave blank margins
+    // in a plain square frame, so we center it on a plain white square with the
+    // site URL in small text at the bottom.
     function fitToSocialSquare(compositeDataUrl) {
-        const SIZE = 1080, PADDING = 60, TEXT_AREA_H = 110;
+        const SIZE = 1080, PADDING = 60, TEXT_AREA_H = 90;
         return new Promise((resolve) => {
             const page = document.createElement('canvas');
             page.width = SIZE;
             page.height = SIZE;
             const ctx = page.getContext('2d');
 
-            const grad = ctx.createLinearGradient(0, 0, SIZE, SIZE);
-            grad.addColorStop(0, '#9333ea');
-            grad.addColorStop(0.5, '#ec4899');
-            grad.addColorStop(1, '#3b82f6');
-            ctx.fillStyle = grad;
+            ctx.fillStyle = '#ffffff';
             ctx.fillRect(0, 0, SIZE, SIZE);
 
             const availW = SIZE - PADDING * 2;
@@ -1434,16 +1446,14 @@
                 const x = (SIZE - w) / 2;
                 const y = PADDING + (availH - h) / 2;
 
-                ctx.fillStyle = '#ffffff';
-                ctx.fillRect(x - 16, y - 16, w + 32, h + 32);
                 ctx.drawImage(img, x, y, w, h);
 
-                ctx.fillStyle = '#ffffff';
+                ctx.fillStyle = '#9ca3af';
                 ctx.textAlign = 'center';
-                ctx.font = 'bold 30px sans-serif';
-                ctx.fillText('🎨 Made with Exquisite Corpse', SIZE / 2, SIZE - 55);
-                ctx.font = '24px sans-serif';
-                ctx.fillText('ecdraw.art', SIZE / 2, SIZE - 20);
+                ctx.font = 'bold 26px sans-serif';
+                ctx.fillText('ecdraw.art', SIZE / 2, SIZE - 54);
+                ctx.font = '20px sans-serif';
+                ctx.fillText('Made with Exquisite Corpse', SIZE / 2, SIZE - 24);
 
                 resolve(page.toDataURL('image/png'));
             };
@@ -1500,6 +1510,20 @@
                 const a = document.createElement('a');
                 a.href = pageDataUrl;
                 a.download = `exquisite-corpse-${S.code || 'game'}-combined.png`;
+                a.click();
+            });
+    }
+
+    // Two creatures side-by-side fill the square's width far better than one tall
+    // strip alone (which left a lot of blank space either side) — reuses the same
+    // side-by-side combine step as the print export, just fit to a square instead.
+    function downloadMultipleSheetsSocial(sheetsToCombine) {
+        combineSheetsRaw(sheetsToCombine)
+            .then(rawDataUrl => fitToSocialSquare(rawDataUrl))
+            .then(pageDataUrl => {
+                const a = document.createElement('a');
+                a.href = pageDataUrl;
+                a.download = `exquisite-corpse-${S.code || 'game'}-combined-social.png`;
                 a.click();
             });
     }
