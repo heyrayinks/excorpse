@@ -16,11 +16,19 @@ const PORT = process.env.PORT || 3000;
 // ===== In-memory game store =====
 const games = new Map();
 
-// Clean up games older than 24 hours
+// Clean up stale games. 'passthrough' games are designed to sit idle between
+// turns for days while a link gets passed along, so they get a much longer
+// cutoff based on last activity rather than the normal 24h-since-created rule.
 setInterval(() => {
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const cutoff = now - 24 * 60 * 60 * 1000;
+  const passthroughCutoff = now - 30 * 24 * 60 * 60 * 1000;
   for (const [code, game] of games) {
-    if (game.createdAt < cutoff) games.delete(code);
+    if (game.mode === 'passthrough' && game.status !== 'completed') {
+      if ((game.lastActivityAt || game.createdAt) < passthroughCutoff) games.delete(code);
+    } else if (game.createdAt < cutoff) {
+      games.delete(code);
+    }
   }
 }, 60 * 60 * 1000);
 
@@ -54,6 +62,8 @@ const SECTIONS = ['head', 'torso', 'legs']; // section drawn in round 1, 2, 3 (a
 // Rotation: in round r, player p works on sheet ((p - 1 + r - 1) % N), where N
 // is the number of players (2 or 3). With 2 players there are only 2 sheets,
 // so they simply alternate/swap sheets each round instead of a 3-way rotation.
+// 'passthrough' mode uses this exact same rotation — it's the identical N-sheet
+// game, just without requiring everyone online together (see /join and /submit).
 function sheetForPlayer(playerOrder, round, maxPlayers) {
   return (playerOrder - 1 + round - 1) % maxPlayers;
 }
@@ -503,7 +513,8 @@ function handleApi(req, res, url) {
       if (!invite) return json(res, 404, { error: 'Invite not found' });
 
       const game = games.get(invite.gameCode);
-      if (!game || game.status !== 'waiting') {
+      const acceptable = game && (game.status === 'waiting' || (game.mode === 'passthrough' && game.status === 'active'));
+      if (!acceptable) {
         data.removeGameInvite(userId, inviteId).catch(() => {});
         return json(res, 410, { error: 'This game is no longer available' });
       }
@@ -513,6 +524,7 @@ function handleApi(req, res, url) {
 
       const user = account.getMe(userId);
       const player = addPlayerToGame(game, user.username, userId);
+      game.lastActivityAt = Date.now();
       data.removeGameInvite(userId, inviteId).catch(() => {});
       return json(res, 200, { playerId: player.id, ...publicState(game, player.id) });
     } catch (e) {
@@ -538,15 +550,21 @@ function handleApi(req, res, url) {
     }
   }
 
-  // ===== GAMES API (existing, unchanged) =====
+  // ===== GAMES API =====
   // POST /api/games -> create
   if (req.method === 'POST' && url.pathname === '/api/games') {
     return readBody(req, 10_000, (err, body) => {
       if (err) return json(res, 400, { error: err.message });
-      const mode = body.mode === 'timed' ? 'timed' : 'async';
+      const mode = body.mode === 'timed' ? 'timed' : body.mode === 'passthrough' ? 'passthrough' : 'async';
       const timePerTurn = mode === 'timed' ? Math.min(10, Math.max(1, Number(body.timePerTurn) || 3)) : null;
-      const maxPlayers = Math.min(20, Math.max(2, Number(body.maxPlayers) || 3)); // 2-20 players (classroom-sized groups)
+      // 'passthrough' is the same N-sheet rotation as the other modes, just without
+      // requiring everyone online together — capped at 2-3 (default 2) since there
+      // are only 3 fixed sections (head/torso/legs) to rotate through.
+      const maxPlayers = mode === 'passthrough'
+        ? Math.min(3, Math.max(2, Number(body.maxPlayers) || 2))
+        : Math.min(20, Math.max(2, Number(body.maxPlayers) || 3)); // 2-20 players (classroom-sized groups)
       const code = generateCode();
+      const now = Date.now();
       games.set(code, {
         code,
         status: 'waiting',
@@ -557,7 +575,8 @@ function handleApi(req, res, url) {
         sheets: Array.from({ length: maxPlayers }, () => ({})), // sheet -> { head: {image, edgeStrip, artist, inspiration}, torso: ..., legs: ... }
         round: null,
         roundStartedAt: null,
-        createdAt: Date.now(),
+        createdAt: now,
+        lastActivityAt: now,
       });
       json(res, 201, { code });
     });
@@ -581,13 +600,25 @@ function handleApi(req, res, url) {
   if (req.method === 'POST' && action === 'join') {
     return readBody(req, 10_000, (err, body) => {
       if (err) return json(res, 400, { error: err.message });
-      if (game.status !== 'waiting') return json(res, 409, { error: 'Game already started' });
+      // 'passthrough' games stay joinable one at a time as the chain progresses,
+      // instead of requiring everyone up front before a 'waiting' lobby closes.
+      const canJoinActive = game.mode === 'passthrough' && game.status === 'active';
+      if (game.status !== 'waiting' && !canJoinActive) return json(res, 409, { error: 'Game already started' });
       if (game.players.length >= game.maxPlayers) return json(res, 409, { error: 'Game is full' });
       const name = String(body.name || '').trim().slice(0, 30);
       if (!name) return json(res, 400, { error: 'Name is required' });
 
       // set only if the joiner happens to be logged in; anonymous play is unaffected
       const player = addPlayerToGame(game, name, auth.tryExtractUserId(req));
+      game.lastActivityAt = Date.now();
+
+      // 'passthrough' has no lobby/Start step — the very first join IS round 1 starting.
+      if (game.mode === 'passthrough' && game.status === 'waiting') {
+        game.status = 'active';
+        game.round = 1;
+        game.roundStartedAt = Date.now();
+      }
+
       json(res, 200, { playerId: player.id, ...publicState(game, player.id) });
     });
   }
@@ -607,18 +638,27 @@ function handleApi(req, res, url) {
     });
   }
 
-  // POST /api/games/:code/invite { playerId, friendUserId } (creator only, friends only)
+  // POST /api/games/:code/invite { playerId, friendUserId } (friends only)
   if (req.method === 'POST' && action === 'invite') {
     return readBody(req, 10_000, async (err, body) => {
       if (err) return json(res, 400, { error: err.message });
       try {
         const userId = auth.extractAndVerifyToken(req);
-        const creator = game.players.find(p => p.id === body.playerId);
-        if (!creator || creator.order !== 1 || creator.userId !== userId) {
-          return json(res, 403, { error: 'Only the game creator can invite' });
+        const inviter = game.players.find(p => p.id === body.playerId);
+        if (!inviter || inviter.userId !== userId) {
+          return json(res, 403, { error: 'Unknown player' });
         }
-        if (game.status !== 'waiting') return json(res, 409, { error: 'Game already started' });
-        if (game.players.length >= game.maxPlayers) return json(res, 409, { error: 'Game is full' });
+
+        if (game.mode === 'passthrough') {
+          // Any player can invite the next artist once they've had their own turn.
+          if (game.status !== 'active') return json(res, 409, { error: 'Game not active' });
+          if (game.players.length >= game.maxPlayers) return json(res, 409, { error: 'All artists have already joined' });
+        } else {
+          // Existing behavior, unchanged: only the creator, only before the game starts.
+          if (inviter.order !== 1) return json(res, 403, { error: 'Only the game creator can invite' });
+          if (game.status !== 'waiting') return json(res, 409, { error: 'Game already started' });
+          if (game.players.length >= game.maxPlayers) return json(res, 409, { error: 'Game is full' });
+        }
 
         const fromUser = account.getMe(userId);
         const result = await friends.inviteToGame(userId, fromUser.username, game.code, body.friendUserId);
@@ -655,9 +695,14 @@ function handleApi(req, res, url) {
         inspiration: inspiration || null,
       };
       player.submissions[game.round] = true;
+      game.lastActivityAt = Date.now();
 
-      // Advance round when everyone has submitted
-      const allSubmitted = game.players.every(p => p.submissions[game.round]);
+      // Advance once everyone currently expected has submitted. The extra
+      // players.length===maxPlayers check matters for 'passthrough': its other
+      // modes always have a full roster by the time status is 'active' (enforced
+      // by /start), but passthrough can reach round 1 with only 1 of maxPlayers
+      // joined so far, and must not advance until everyone has actually joined in.
+      const allSubmitted = game.players.length === game.maxPlayers && game.players.every(p => p.submissions[game.round]);
       if (allSubmitted) {
         if (game.round >= 3) {
           game.status = 'completed';
