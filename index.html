@@ -8,6 +8,15 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; }
+        /* Mobile Safari's 100vh doesn't match the actually-visible viewport (it's sized
+           for the browser chrome collapsed), which left a gap of plain white page
+           background below every min-h-screen screen. 100dvh tracks the real visible
+           area; !important because Tailwind's CDN build injects its own .min-h-screen
+           rule after this stylesheet, and would otherwise win on source order. */
+        .min-h-screen {
+            min-height: 100vh !important;
+            min-height: 100dvh !important;
+        }
         .layerCanvas {
             touch-action: none;               /* stops scroll/pinch while drawing */
             -webkit-user-select: none;
