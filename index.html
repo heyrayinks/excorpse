@@ -17,6 +17,30 @@
             top: 0;
             left: 0;
         }
+        /* The edge-hint strip sits above the canvas but outside it — without this,
+           a finger touching it (reaching for the connecting line) falls through to
+           native scroll/pull-to-refresh instead of being treated as part of the paper. */
+        #paperArea {
+            touch-action: none;
+            overscroll-behavior: contain;
+        }
+        #offsetCrosshair {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            margin-left: -10px;
+            margin-top: -10px;
+            pointer-events: none;
+            z-index: 3;
+            display: none;
+        }
+        #offsetCrosshair::before, #offsetCrosshair::after {
+            content: '';
+            position: absolute;
+            background: rgba(220, 38, 38, 0.85);
+        }
+        #offsetCrosshair::before { left: 50%; top: 0; bottom: 0; width: 2px; transform: translateX(-50%); }
+        #offsetCrosshair::after { top: 50%; left: 0; right: 0; height: 2px; transform: translateY(-50%); }
         .fade-in { animation: fadeIn 0.8s ease-in forwards; opacity: 0; }
         @keyframes fadeIn { to { opacity: 1; } }
         .toolBtn.active, .layerBtn.active { background: #1f2937; color: white; }
@@ -36,8 +60,11 @@
         // drawing state
         tool: 'pen',           // pen | eraser | fill
         brushColor: '#000000',
-        brushSize: 4,
+        brushSize: 5,
         activeLayer: 1,        // 1 = line art (top, default), 0 = background/fill (bottom)
+        // finger-drawing aid: draws at a point offset from the actual touch, with a
+        // crosshair marker, so the fingertip doesn't block the view of the line
+        cursorOffset: localStorage.getItem('ec_cursorOffset') === 'true',
         undoStacks: [[], []],  // per-layer dataURL snapshots (compressed, memory-friendly)
         submittedThisRound: false,
         lastRound: null,
@@ -183,6 +210,15 @@
         return code;
     }
 
+    // Every new match starts fresh — pen tool, black, default size — regardless of
+    // whatever was left selected at the end of a previous match this session.
+    function resetDrawingTools() {
+        S.tool = 'pen';
+        S.brushColor = '#000000';
+        S.brushSize = 5;
+        S.activeLayer = 1;
+    }
+
     async function joinGame(code, name) {
         // Uses authApi (not api) so a logged-in player's userId gets attached
         // server-side, feeding the "games played together" friend stat — anonymous
@@ -193,6 +229,7 @@
         S.game = data;
         sessionStorage.setItem('ec_code', S.code);
         sessionStorage.setItem('ec_playerId', S.playerId);
+        resetDrawingTools();
     }
 
     async function pollState() {
@@ -236,6 +273,7 @@
             if (roundChanged) {
                 S.lastRound = cur.round;
                 S.submittedThisRound = cur.you ? cur.you.submitted : false;
+                resetDrawingTools(); // every round starts back on pen/black, regardless of what was picked last round
                 S.screen = 'draw';
                 render();
                 // Round 1 fires immediately after everyone's already looking at the
@@ -711,6 +749,8 @@
                 <div class="h-6 border-l border-gray-300"></div>
                 <button id="undoBtn" class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold rounded-lg">↶ Undo</button>
                 <button id="clearBtn" class="px-3 py-1.5 bg-orange-100 hover:bg-orange-200 text-orange-700 text-sm font-semibold rounded-lg">Clear</button>
+                <div class="h-6 border-l border-gray-300"></div>
+                <button id="offsetToggleBtn" class="px-2.5 py-1.5 rounded-lg border text-sm font-semibold ${S.cursorOffset ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-300'}" title="Draw with a small offset crosshair so your finger doesn't block the line">🎯 Finger offset</button>
                 <div id="roundStatus" class="ml-auto flex gap-2"></div>
             </div>
 
@@ -724,6 +764,7 @@
                     <div id="canvasStack" class="relative bg-white border-2 ${g.edgeHint ? 'border-amber-400 border-t-amber-200' : 'border-gray-300'}">
                         <canvas id="layerCanvas0" width="${CANVAS_W}" height="${CANVAS_H}" class="layerCanvas block" style="z-index:1"></canvas>
                         <canvas id="layerCanvas1" width="${CANVAS_W}" height="${CANVAS_H}" class="layerCanvas block" style="z-index:2; cursor:crosshair"></canvas>
+                        <div id="offsetCrosshair"></div>
                     </div>
                 </div>
             </div>
@@ -796,12 +837,31 @@
         let penSeen = false;        // once a stylus is used, ignore finger touches (palm rejection)
         let last = null;            // previous point for segment drawing
 
+        // "Finger offset" aid: shifts the effective drawing point away from a touch
+        // (not mouse/pen — those already have a visible tip), so the fingertip
+        // doesn't sit directly on top of the line being drawn.
+        const OFFSET_PX = 10;
+        const crosshair = document.getElementById('offsetCrosshair');
+
         function pos(e) {
             const rect = topCanvas.getBoundingClientRect();
+            const clientX = (S.cursorOffset && e.pointerType === 'touch') ? e.clientX - OFFSET_PX : e.clientX;
             return {
-                x: (e.clientX - rect.left) * (CANVAS_W / rect.width),
+                x: (clientX - rect.left) * (CANVAS_W / rect.width),
                 y: (e.clientY - rect.top) * (CANVAS_H / rect.height),
             };
+        }
+
+        function updateCrosshair(e) {
+            if (!crosshair) return;
+            if (!S.cursorOffset || e.pointerType !== 'touch') {
+                crosshair.style.display = 'none';
+                return;
+            }
+            const rect = topCanvas.getBoundingClientRect();
+            crosshair.style.display = 'block';
+            crosshair.style.left = (e.clientX - rect.left - OFFSET_PX) + 'px';
+            crosshair.style.top = (e.clientY - rect.top) + 'px';
         }
 
         // Pressure-aware width: Apple Pencil / stylus varies 0..1, mouse & touch report 0.5
@@ -843,6 +903,7 @@
             // Ignore extra simultaneous pointers (second finger, resting palm)
             if (activePointer !== null) return;
 
+            updateCrosshair(e);
             const p = pos(e);
 
             if (S.tool === 'fill') {
@@ -862,6 +923,7 @@
             if (e.pointerId !== activePointer) return;
             e.preventDefault();
 
+            updateCrosshair(e);
             // Coalesced events: Apple Pencil samples at 240Hz — much smoother curves
             const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
             for (const ev of events) {
@@ -876,10 +938,18 @@
                 activePointer = null;
                 last = null;
             }
+            if (crosshair) crosshair.style.display = 'none';
         };
         topCanvas.addEventListener('pointerup', stop);
         topCanvas.addEventListener('pointercancel', stop);
         topCanvas.addEventListener('contextmenu', e => e.preventDefault()); // no long-press menu on tablets
+
+        document.getElementById('offsetToggleBtn').addEventListener('click', (e) => {
+            S.cursorOffset = !S.cursorOffset;
+            localStorage.setItem('ec_cursorOffset', String(S.cursorOffset));
+            e.target.className = `px-2.5 py-1.5 rounded-lg border text-sm font-semibold ${S.cursorOffset ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-300'}`;
+            if (!S.cursorOffset && crosshair) crosshair.style.display = 'none';
+        });
 
         // Tool buttons
         const toolBtns = { pen: 'toolPen', eraser: 'toolEraser', fill: 'toolFill' };
@@ -2091,6 +2161,7 @@
                     S.game = data;
                     sessionStorage.setItem('ec_code', S.code);
                     sessionStorage.setItem('ec_playerId', S.playerId);
+                    resetDrawingTools();
                     S.screen = 'lobby';
                     render();
                     startPolling();
