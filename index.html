@@ -33,6 +33,15 @@
             touch-action: none;
             overscroll-behavior: contain;
         }
+        /* Plain <img> elements get iOS's native long-press "Save Image" callout
+           regardless of touch-action — that's a separate gesture recognizer.
+           The edge-hint strip is a static reference, never meant to be touched. */
+        #edgeHintImg {
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            pointer-events: none;
+        }
         #offsetCrosshair {
             position: absolute;
             width: 20px;
@@ -52,7 +61,7 @@
         #offsetCrosshair::after { top: 50%; left: 0; right: 0; height: 2px; transform: translateY(-50%); }
         .fade-in { animation: fadeIn 0.8s ease-in forwards; opacity: 0; }
         @keyframes fadeIn { to { opacity: 1; } }
-        .toolBtn.active, .layerBtn.active { background: #1f2937; color: white; }
+        .layerBtn.active { background: #1f2937; color: white; }
     </style>
 </head>
 <body>
@@ -69,7 +78,8 @@
         // drawing state
         tool: 'pen',           // pen | eraser | fill
         brushColor: '#000000',
-        brushSize: 5,
+        penSize: 5,
+        eraserSize: 15,
         activeLayer: 1,        // 1 = line art (top, default), 0 = background/fill (bottom)
         // finger-drawing aid: draws at a point offset from the actual touch, with a
         // crosshair marker, so the fingertip doesn't block the view of the line
@@ -97,6 +107,19 @@
 
     const app = document.getElementById('app');
     const SECTION_LABELS = { head: 'Head', torso: 'Torso', legs: 'Legs' };
+    const TOOL_META = {
+        pen: { icon: '✏️', label: 'Pen' },
+        eraser: { icon: '🧽', label: 'Eraser' },
+        fill: { icon: '🪣', label: 'Fill' },
+    };
+
+    // Pen and eraser keep independent sizes — eraser defaults bigger and has
+    // a wider max, since erasing usually wants a chunkier tip than drawing.
+    function sizeConfigFor(tool) {
+        return tool === 'eraser'
+            ? { min: 1, max: 60, value: S.eraserSize, label: 'Eraser size' }
+            : { min: 1, max: 40, value: S.penSize, label: 'Pen size' };
+    }
     const SECTION_TIPS = {
         head: 'Draw a head. Bring the neck lines down to the bottom edge so the next artist can connect.',
         torso: 'Draw a torso. Start from the lines at the top edge and bring your lines down to the bottom edge.',
@@ -224,7 +247,8 @@
     function resetDrawingTools() {
         S.tool = 'pen';
         S.brushColor = '#000000';
-        S.brushSize = 5;
+        S.penSize = 5;
+        S.eraserSize = 15;
         S.activeLayer = 1;
     }
 
@@ -738,6 +762,7 @@
         if (submitted) { renderWaiting(); return; }
 
         applyRenderScale(); // sets CANVAS_W/H/EDGE_H based on whether THIS player is paid
+        const sizeCfg = sizeConfigFor(S.tool);
 
         // Fresh inspiration word each round; modal auto-opens once per round
         const showInspModal = S.inspRound !== g.round;
@@ -751,7 +776,10 @@
             <!-- Top bar -->
             <div class="flex items-center justify-between px-4 py-2 bg-white shadow-sm shrink-0">
                 <div class="flex items-center gap-3">
-                    <span class="font-bold text-lg">Round ${g.round}/3: ${SECTION_LABELS[section]}</span>
+                    <span class="flex items-baseline gap-2">
+                        <span class="text-sm text-gray-500">Round ${g.round}/3</span>
+                        <span class="font-bold text-2xl uppercase tracking-wide text-amber-700 border-b-2 border-amber-400 leading-tight">${SECTION_LABELS[section]}</span>
+                    </span>
                     <button id="inspChip" class="px-2.5 py-1 bg-yellow-50 hover:bg-yellow-100 border border-yellow-300 text-yellow-800 text-sm font-semibold rounded-full" title="Show inspiration">
                         💡 <span id="inspChipWord" class="capitalize">${S.inspWord}</span>
                     </button>
@@ -779,10 +807,16 @@
 
             <!-- Toolbar -->
             <div class="flex items-center gap-3 px-4 py-2 bg-white border-t border-gray-100 shadow-sm shrink-0 flex-wrap">
-                <div class="flex gap-1">
-                    <button id="toolPen" class="toolBtn active px-3 py-1.5 rounded-lg border border-gray-300 text-sm font-semibold" title="Pen">✏️ Pen</button>
-                    <button id="toolEraser" class="toolBtn px-3 py-1.5 rounded-lg border border-gray-300 text-sm font-semibold" title="Eraser">🧽 Eraser</button>
-                    <button id="toolFill" class="toolBtn px-3 py-1.5 rounded-lg border border-gray-300 text-sm font-semibold" title="Fill enclosed areas">🪣 Fill</button>
+                <div class="relative">
+                    <button id="toolTrigger" class="px-3 py-1.5 rounded-lg border border-gray-300 text-sm font-semibold flex items-center gap-1.5" title="Drawing tool">
+                        <span id="toolTriggerLabel">${TOOL_META[S.tool].icon} ${TOOL_META[S.tool].label}</span>
+                        <span class="text-gray-400 text-[10px]">▾</span>
+                    </button>
+                    <div id="toolMenu" class="hidden absolute left-0 top-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-20 overflow-hidden" style="min-width:130px">
+                        ${Object.entries(TOOL_META).map(([tool, meta]) => `
+                            <button data-tool="${tool}" class="toolMenuItem block w-full text-left px-3 py-2 text-sm font-semibold hover:bg-gray-100 ${tool === S.tool ? 'bg-gray-100' : ''}">${meta.icon} ${meta.label}</button>
+                        `).join('')}
+                    </div>
                 </div>
                 <div class="h-6 border-l border-gray-300"></div>
                 <div class="flex items-center gap-1.5">
@@ -802,9 +836,9 @@
                 </div>
                 <div class="h-6 border-l border-gray-300"></div>
                 <div class="flex items-center gap-2">
-                    <span class="text-xs text-gray-500">Size</span>
-                    <input id="sizeSlider" type="range" min="1" max="40" value="${S.brushSize}" class="w-24">
-                    <span id="sizeLabel" class="text-xs text-gray-500 w-5">${S.brushSize}</span>
+                    <span id="sizeLabelText" class="text-xs text-gray-500">${sizeCfg.label}</span>
+                    <input id="sizeSlider" type="range" min="${sizeCfg.min}" max="${sizeCfg.max}" value="${sizeCfg.value}" class="w-24">
+                    <span id="sizeLabel" class="text-xs text-gray-500 w-5">${sizeCfg.value}</span>
                 </div>
                 <div class="h-6 border-l border-gray-300"></div>
                 <button id="undoBtn" class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold rounded-lg">↶ Undo</button>
@@ -928,7 +962,7 @@
         function widthFor(e) {
             // Multiply by RENDER_SCALE so a given brush size looks the same
             // physical thickness on the page regardless of underlying resolution
-            const base = (S.tool === 'eraser' ? S.brushSize * 2 : S.brushSize) * RENDER_SCALE;
+            const base = (S.tool === 'eraser' ? S.eraserSize : S.penSize) * RENDER_SCALE;
             if (e.pointerType === 'pen' && e.pressure > 0) {
                 return Math.max(0.5, base * (0.3 + e.pressure * 1.4));
             }
@@ -1011,17 +1045,44 @@
             if (!S.cursorOffset && crosshair) crosshair.style.display = 'none';
         });
 
-        // Tool buttons
-        const toolBtns = { pen: 'toolPen', eraser: 'toolEraser', fill: 'toolFill' };
-        Object.entries(toolBtns).forEach(([tool, id]) => {
-            document.getElementById(id).addEventListener('click', () => {
-                S.tool = tool;
-                Object.entries(toolBtns).forEach(([t, i]) => {
-                    document.getElementById(i).classList.toggle('active', t === tool);
-                });
-                topCanvas.style.cursor = tool === 'fill' ? 'cell' : 'crosshair';
+        // Tool picker: a single trigger button that expands into a dropdown of
+        // the other tools, rather than three always-visible buttons — keeps the
+        // toolbar compact.
+        const toolTrigger = document.getElementById('toolTrigger');
+        const toolMenu = document.getElementById('toolMenu');
+        const toolTriggerLabel = document.getElementById('toolTriggerLabel');
+
+        function selectTool(tool) {
+            S.tool = tool;
+            toolTriggerLabel.textContent = `${TOOL_META[tool].icon} ${TOOL_META[tool].label}`;
+            document.querySelectorAll('.toolMenuItem').forEach(btn => {
+                btn.classList.toggle('bg-gray-100', btn.dataset.tool === tool);
             });
+            topCanvas.style.cursor = tool === 'fill' ? 'cell' : 'crosshair';
+
+            const cfg = sizeConfigFor(tool);
+            const slider = document.getElementById('sizeSlider');
+            slider.min = cfg.min;
+            slider.max = cfg.max;
+            slider.value = cfg.value;
+            document.getElementById('sizeLabel').textContent = cfg.value;
+            document.getElementById('sizeLabelText').textContent = cfg.label;
+
+            toolMenu.classList.add('hidden');
+        }
+        toolTrigger.addEventListener('click', e => {
+            e.stopPropagation();
+            toolMenu.classList.toggle('hidden');
         });
+        document.querySelectorAll('.toolMenuItem').forEach(btn => {
+            btn.addEventListener('click', () => selectTool(btn.dataset.tool));
+        });
+        // Plain assignment (not addEventListener) so re-running setupCanvas each
+        // round replaces the old handler instead of stacking a new one — same
+        // pattern as window.onresize below.
+        document.onclick = e => {
+            if (!toolMenu.contains(e.target) && e.target !== toolTrigger) toolMenu.classList.add('hidden');
+        };
 
         // Layer buttons
         document.querySelectorAll('.layerBtn').forEach(btn => {
@@ -1040,7 +1101,7 @@
                 b.className = `colorBtn w-7 h-7 rounded-full border-2 ${b.dataset.color === color ? 'border-gray-900 scale-110' : 'border-gray-200'}`;
             });
             // Picking a color switches off the eraser (common expectation)
-            if (S.tool === 'eraser') document.getElementById('toolPen').click();
+            if (S.tool === 'eraser') selectTool('pen');
         }
         document.querySelectorAll('.colorBtn').forEach(btn => {
             btn.addEventListener('click', () => selectColor(btn.dataset.color));
@@ -1048,8 +1109,10 @@
         document.getElementById('customColor').addEventListener('input', e => selectColor(e.target.value));
 
         document.getElementById('sizeSlider').addEventListener('input', e => {
-            S.brushSize = Number(e.target.value);
-            document.getElementById('sizeLabel').textContent = e.target.value;
+            const val = Number(e.target.value);
+            if (S.tool === 'eraser') S.eraserSize = val;
+            else S.penSize = val;
+            document.getElementById('sizeLabel').textContent = val;
         });
 
         document.getElementById('undoBtn').addEventListener('click', () => {
@@ -1219,6 +1282,9 @@
                                 <div id="passthroughFriendList" class="hidden mt-2 space-y-1"></div>
                             ` : ''}
                         </div>
+                        <button id="cancelPassthroughBtn" class="w-full px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-500 text-sm font-medium rounded-lg">
+                            Cancel game
+                        </button>
                     ` : ''}
                     <div id="roundStatus" class="space-y-2"></div>
                     ${renderNotifyToggle()}
@@ -1273,6 +1339,20 @@
                     }
                 });
             }
+
+            // The invited artist may never show up — without this, the waiting
+            // player is stuck polling forever with no way out.
+            document.getElementById('cancelPassthroughBtn').addEventListener('click', async () => {
+                if (!confirm('Cancel this game? The invite link will stop working.')) return;
+                try {
+                    await api(`/games/${g.code}/cancel`, { method: 'POST', body: JSON.stringify({ playerId: S.playerId }) });
+                } catch (e) { /* game is being abandoned regardless of server outcome */ }
+                stopPolling();
+                clearSession();
+                S.screen = 'home';
+                history.replaceState(null, '', '/');
+                render();
+            });
         }
     }
 

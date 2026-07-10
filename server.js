@@ -582,7 +582,7 @@ function handleApi(req, res, url) {
     });
   }
 
-  const match = url.pathname.match(/^\/api\/games\/([A-Z0-9]{6})(?:\/(join|start|submit|invite))?$/i);
+  const match = url.pathname.match(/^\/api\/games\/([A-Z0-9]{6})(?:\/(join|start|submit|invite|cancel))?$/i);
   if (!match) return json(res, 404, { error: 'Not found' });
 
   const code = match[1].toUpperCase();
@@ -667,6 +667,21 @@ function handleApi(req, res, url) {
         const status = e.status || 500;
         json(res, status, { error: e.error || e.message });
       }
+    });
+  }
+
+  // POST /api/games/:code/cancel { playerId } — lets a participant abandon a
+  // stalled game (e.g. a 'passthrough' invite that never got accepted) instead
+  // of polling forever. Deletes the game outright, so a late joiner hitting a
+  // stale invite link afterward gets a clean "not found" instead of an orphaned game.
+  if (req.method === 'POST' && action === 'cancel') {
+    return readBody(req, 10_000, (err, body) => {
+      if (err) return json(res, 400, { error: err.message });
+      const player = game.players.find(p => p.id === body.playerId);
+      if (!player) return json(res, 403, { error: 'Unknown player' });
+      if (game.status === 'completed') return json(res, 409, { error: 'Game already completed' });
+      games.delete(code);
+      json(res, 200, { cancelled: true });
     });
   }
 
