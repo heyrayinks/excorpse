@@ -473,6 +473,7 @@
         else if (S.screen === 'account') renderAccount();
         else if (S.screen === 'friendProfile') renderFriendProfile();
         else if (S.screen === 'checkoutPending') renderCheckoutPending();
+        else if (S.screen === 'about') renderAbout();
     }
 
     // ---------- HOME ----------
@@ -500,6 +501,7 @@
                     <div class="text-center mb-6">
                         <h1 class="text-4xl font-bold text-gray-900 mb-2">🎨 Exquisite Corpse</h1>
                         <p class="text-gray-600">2-20 artists. A creature each. Zero spoilers.</p>
+                        <button id="aboutLink" type="button" class="text-xs text-purple-500 hover:text-purple-700 hover:underline">Why the name Exquisite Corpse?</button>
                     </div>
 
                     ${S.error ? `<div class="mb-4 p-3 bg-red-50 border border-red-300 text-red-700 rounded-lg text-sm">${S.error}</div>` : ''}
@@ -577,6 +579,11 @@
         </div>`;
 
         S.error = null;
+
+        document.getElementById('aboutLink').addEventListener('click', () => {
+            S.screen = 'about';
+            render();
+        });
 
         if (S.authToken && S.user) {
             document.getElementById('accountLink').addEventListener('click', () => {
@@ -666,6 +673,39 @@
         }
 
         function showHomeError(msg) { S.error = msg; renderHome(); }
+    }
+
+    // ---------- ABOUT ----------
+    function renderAbout() {
+        app.innerHTML = `
+        <div class="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-blue-500 p-4 flex items-center justify-center">
+            <div class="w-full max-w-2xl">
+                <div class="bg-white rounded-2xl shadow-2xl p-8">
+                    <button id="aboutBackBtn" class="text-sm text-gray-400 hover:text-gray-600 mb-4">&larr; Back</button>
+                    <h1 class="text-3xl font-bold text-gray-900 mb-1">Why "Exquisite Corpse"?</h1>
+                    <p class="text-sm text-gray-400 mb-6">A quick history of the game this app is named after.</p>
+
+                    <div class="space-y-4 text-gray-700 leading-relaxed">
+                        <p>Exquisite Corpse — from the French <i>cadavre exquis</i>, "exquisite cadaver" — is a nearly hundred-year-old collaborative drawing game invented in Paris in 1925 by a circle of Surrealist artists and writers, including André Breton, Yves Tanguy, and Jacques Prévert. It grew out of an older parlor game called Consequences, where players wrote in turn on a folded sheet of paper, each unable to see what came before.</p>
+                        <p>The unsettling name comes from one of the very first sentences the group produced playing a word version of the game: <i>"Le cadavre exquis boira le vin nouveau"</i> — "The exquisite corpse shall drink the new wine." The phrase was strange enough to stick, and so did the game.</p>
+                        <p>The Surrealists were drawn to it because each contributor could only see a sliver of what came before — a single edge of a line — forcing pure imagination to fill in the rest. The results were often strange, funny, and impossible for any one person to have invented alone. That's exactly the spirit this app tries to recreate: you'll only ever see the edge of what the last artist drew.</p>
+                    </div>
+
+                    <div class="mt-8 pt-6 border-t border-gray-100">
+                        <h2 class="text-sm font-semibold text-gray-500 mb-2">Sources & further reading</h2>
+                        <ul class="space-y-1 text-sm">
+                            <li><a href="https://www.moma.org/collection/terms/exquisite-corpse" target="_blank" rel="noopener noreferrer" class="text-purple-600 hover:underline">MoMA — Exquisite corpse</a></li>
+                            <li><a href="https://www.tate.org.uk/art/art-terms/c/cadavre-exquis-exquisite-corpse" target="_blank" rel="noopener noreferrer" class="text-purple-600 hover:underline">Tate — Cadavre exquis (exquisite corpse)</a></li>
+                            <li><a href="https://www.artic.edu/artworks/119118/exquisite-corpse" target="_blank" rel="noopener noreferrer" class="text-purple-600 hover:underline">Art Institute of Chicago — Exquisite Corpse</a></li>
+                            <li><a href="https://artsandculture.google.com/usergallery/KgIS2IG9Oi8gJg" target="_blank" rel="noopener noreferrer" class="text-purple-600 hover:underline">Google Arts & Culture — Surrealism / Exquisite Corpse</a></li>
+                            <li><a href="https://en.wikipedia.org/wiki/Exquisite_corpse" target="_blank" rel="noopener noreferrer" class="text-purple-600 hover:underline">Wikipedia — Exquisite corpse</a></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+
+        document.getElementById('aboutBackBtn').addEventListener('click', () => { S.screen = 'home'; render(); });
     }
 
     // ---------- LOBBY ----------
