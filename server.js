@@ -124,6 +124,40 @@ function publicState(game, playerId) {
   return state;
 }
 
+// Summarizes every in-progress 'passthrough' game a user is a player in —
+// backs both the /games/mine listing and the free-tier "one at a time" gate,
+// since passthrough is the only mode a player can be quietly mid-way through
+// without anyone else around (async/timed games live entirely in one lobby session).
+function myActiveGames(userId, excludeCode) {
+  const result = [];
+  for (const [code, game] of games) {
+    if (code === excludeCode) continue;
+    if (game.mode !== 'passthrough' || game.status === 'completed') continue;
+    const player = game.players.find(p => p.userId === userId);
+    if (!player) continue;
+
+    const round = game.round;
+    const needsSubmission = !!round && !player.submissions[round];
+    let continuingFrom = null;
+    if (needsSubmission && round > 1) {
+      const sheetIdx = sheetForPlayer(player.order, round, game.maxPlayers);
+      const prevSection = game.sheets[sheetIdx][SECTIONS[round - 2]];
+      continuingFrom = prevSection ? prevSection.artist : null;
+    }
+
+    result.push({
+      code,
+      playerId: player.id,
+      round,
+      section: round ? SECTIONS[round - 1] : null,
+      needsSubmission,
+      waitingForPlayers: game.players.length < game.maxPlayers,
+      continuingFrom,
+    });
+  }
+  return result;
+}
+
 function json(res, status, obj) {
   res.writeHead(status, {
     'Content-Type': 'application/json',
@@ -523,6 +557,12 @@ function handleApi(req, res, url) {
       }
 
       const user = account.getMe(userId);
+
+      // Same free-tier "one passthrough game at a time" gate as /join.
+      if (game.mode === 'passthrough' && !user.paid && myActiveGames(userId, game.code).length > 0) {
+        return json(res, 403, { error: 'Free accounts can only be in one Pass the Sheet game at a time. Upgrade to play multiple at once.' });
+      }
+
       const player = addPlayerToGame(game, user.username, userId);
       game.lastActivityAt = Date.now();
       data.removeGameInvite(userId, inviteId).catch(() => {});
@@ -551,6 +591,18 @@ function handleApi(req, res, url) {
   }
 
   // ===== GAMES API =====
+  // GET /api/games/mine — every in-progress 'passthrough' game the logged-in
+  // user is part of, for the "continue a drawing" picker.
+  if (url.pathname === '/api/games/mine' && req.method === 'GET') {
+    try {
+      const userId = auth.extractAndVerifyToken(req);
+      return json(res, 200, { games: myActiveGames(userId) });
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.error || e.message });
+    }
+  }
+
   // POST /api/games -> create
   if (req.method === 'POST' && url.pathname === '/api/games') {
     return readBody(req, 10_000, (err, body) => {
@@ -609,7 +661,19 @@ function handleApi(req, res, url) {
       if (!name) return json(res, 400, { error: 'Name is required' });
 
       // set only if the joiner happens to be logged in; anonymous play is unaffected
-      const player = addPlayerToGame(game, name, auth.tryExtractUserId(req));
+      const joinerUserId = auth.tryExtractUserId(req);
+
+      // Free accounts can only be mid-way through one 'passthrough' game at a
+      // time — paid accounts can run several at once without one unresponsive
+      // partner blocking the others. Anonymous joins have no account to gate.
+      if (game.mode === 'passthrough' && joinerUserId) {
+        const joiner = data.getUserById(joinerUserId);
+        if (joiner && !joiner.paid && myActiveGames(joinerUserId, code).length > 0) {
+          return json(res, 403, { error: 'Free accounts can only be in one Pass the Sheet game at a time. Upgrade to play multiple at once.' });
+        }
+      }
+
+      const player = addPlayerToGame(game, name, joinerUserId);
       game.lastActivityAt = Date.now();
 
       // 'passthrough' has no lobby/Start step — the very first join IS round 1 starting.
