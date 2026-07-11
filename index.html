@@ -76,10 +76,12 @@
         game: null,
         pollTimer: null,
         // drawing state
-        tool: 'pen',           // pen | eraser | fill
+        tool: 'pen',           // pen | pencil | brush | eraser | fill — pencil/brush are paid-only
         brushColor: '#000000',
         penSize: 5,
         eraserSize: 15,
+        pencilSize: 6,
+        brushSize: 12,
         activeLayer: 1,        // 1 = line art (top, default), 0 = background/fill (bottom)
         // finger-drawing aid: draws at a point offset from the actual touch, with a
         // crosshair marker, so the fingertip doesn't block the view of the line
@@ -107,18 +109,22 @@
 
     const app = document.getElementById('app');
     const SECTION_LABELS = { head: 'Head', torso: 'Torso', legs: 'Legs' };
+    // pencil/brush are paid-only — filtered out of the tool menu for free accounts.
     const TOOL_META = {
-        pen: { icon: '✏️', label: 'Pen' },
+        pen: { icon: '🖊️', label: 'Pen' },
+        pencil: { icon: '✏️', label: 'Pencil', paid: true },
+        brush: { icon: '🖌️', label: 'Brush', paid: true },
         eraser: { icon: '🧽', label: 'Eraser' },
         fill: { icon: '🪣', label: 'Fill' },
     };
 
-    // Pen and eraser keep independent sizes — eraser defaults bigger and has
-    // a wider max, since erasing usually wants a chunkier tip than drawing.
+    // Every tool keeps its own independent size — eraser/brush default bigger
+    // and have wider max ranges, since both usually want a chunkier tip.
     function sizeConfigFor(tool) {
-        return tool === 'eraser'
-            ? { min: 1, max: 60, value: S.eraserSize, label: 'Eraser size' }
-            : { min: 1, max: 40, value: S.penSize, label: 'Pen size' };
+        if (tool === 'eraser') return { min: 1, max: 60, value: S.eraserSize, label: 'Eraser size' };
+        if (tool === 'pencil') return { min: 1, max: 30, value: S.pencilSize, label: 'Pencil size' };
+        if (tool === 'brush') return { min: 1, max: 50, value: S.brushSize, label: 'Brush size' };
+        return { min: 1, max: 40, value: S.penSize, label: 'Pen size' };
     }
     const SECTION_TIPS = {
         head: 'Draw a head. Bring the neck lines down to the bottom edge so the next artist can connect.',
@@ -252,6 +258,8 @@
         S.brushColor = '#000000';
         S.penSize = 5;
         S.eraserSize = 15;
+        S.pencilSize = 6;
+        S.brushSize = 12;
         S.activeLayer = 1;
     }
 
@@ -860,11 +868,12 @@
                         <span class="text-gray-400 text-[10px]">▾</span>
                     </button>
                     <div id="toolMenu" class="hidden absolute left-0 top-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-20 overflow-hidden" style="min-width:130px">
-                        ${Object.entries(TOOL_META).map(([tool, meta]) => `
+                        ${Object.entries(TOOL_META).filter(([, meta]) => !meta.paid || (S.authToken && S.user && S.user.paid)).map(([tool, meta]) => `
                             <button data-tool="${tool}" class="toolMenuItem block w-full text-left px-3 py-2 text-sm font-semibold hover:bg-gray-100 ${tool === S.tool ? 'bg-gray-100' : ''}">${meta.icon} ${meta.label}</button>
                         `).join('')}
                     </div>
                 </div>
+                <span id="brushHint" class="text-xs text-amber-600 font-semibold ${S.tool === 'brush' ? '' : 'hidden'}">🖊️ stylus only</span>
                 <div class="h-6 border-l border-gray-300"></div>
                 <div class="flex items-center gap-1.5">
                     <span class="text-xs text-gray-500 mr-0.5">Layer</span>
@@ -1009,7 +1018,15 @@
         function widthFor(e) {
             // Multiply by RENDER_SCALE so a given brush size looks the same
             // physical thickness on the page regardless of underlying resolution
-            const base = (S.tool === 'eraser' ? S.eraserSize : S.penSize) * RENDER_SCALE;
+            const sizeMap = { eraser: S.eraserSize, pencil: S.pencilSize, brush: S.brushSize };
+            const base = (sizeMap[S.tool] ?? S.penSize) * RENDER_SCALE;
+            if (S.tool === 'brush') {
+                // Brush is stylus-only, so pressure is always meaningful here —
+                // a much wider swing than pen's subtle variation, closer to a
+                // real ink brush going from a hair-thin touch to a full stroke.
+                const pressure = e.pressure > 0 ? e.pressure : 0.5;
+                return Math.max(0.4, base * (0.08 + pressure * 2.2));
+            }
             if (e.pointerType === 'pen' && e.pressure > 0) {
                 return Math.max(0.5, base * (0.3 + e.pressure * 1.4));
             }
@@ -1019,12 +1036,92 @@
         function drawSegment(from, to, width) {
             const ctx = ctxs[S.activeLayer];
             ctx.globalCompositeOperation = S.tool === 'eraser' ? 'destination-out' : 'source-over';
+
+            if (S.tool === 'pencil') {
+                drawGrainySegment(ctx, from, to, width);
+                return;
+            }
+
             ctx.strokeStyle = S.brushColor;
             ctx.lineWidth = width;
             ctx.beginPath();
             ctx.moveTo(from.x, from.y);
             ctx.lineTo(to.x, to.y);
             ctx.stroke();
+        }
+
+        // Scatters small jittered, semi-transparent specks along the segment
+        // instead of a flat stroke — reads as grainy graphite rather than a
+        // clean marker line, regardless of input device.
+        function drawGrainySegment(ctx, from, to, width) {
+            const dx = to.x - from.x, dy = to.y - from.y;
+            const dist = Math.hypot(dx, dy) || 0.01;
+            const r = Math.max(1, width) / 2;
+            const step = Math.max(1, r * 0.7);
+            const steps = Math.max(1, Math.ceil(dist / step));
+            const fr = parseInt(S.brushColor.slice(1, 3), 16);
+            const fg = parseInt(S.brushColor.slice(3, 5), 16);
+            const fb = parseInt(S.brushColor.slice(5, 7), 16);
+
+            for (let i = 0; i <= steps; i++) {
+                const t = i / steps;
+                const cx = from.x + dx * t;
+                const cy = from.y + dy * t;
+                for (let s = 0; s < 3; s++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const rad = Math.random() * r;
+                    const px = cx + Math.cos(angle) * rad;
+                    const py = cy + Math.sin(angle) * rad;
+                    const alpha = 0.12 + Math.random() * 0.28;
+                    const size = Math.max(0.4, r * (0.15 + Math.random() * 0.35));
+                    ctx.beginPath();
+                    ctx.fillStyle = `rgba(${fr}, ${fg}, ${fb}, ${alpha})`;
+                    ctx.arc(px, py, size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+        }
+
+        const BRUSH_TAPER_IN_POINTS = 6;   // how many points it takes to ramp up to full pressure width
+        const BRUSH_TAPER_OUT_POINTS = 8;  // how many trailing points get tapered back down to a point
+        let brushStroke = []; // {x, y, width} for the in-progress brush stroke, used to taper the tail on lift-off
+
+        function brushTaperInFactor(pointIndex) {
+            return Math.min(1, (pointIndex + 1) / BRUSH_TAPER_IN_POINTS);
+        }
+
+        // Real ink brushes lift off the page rather than ending in a blunt cap.
+        // The live-drawn tail already has ink at near-full width, so this erases
+        // just that tail and redraws it tapering down to a point.
+        function finishBrushTaper() {
+            if (brushStroke.length < 2) { brushStroke = []; return; }
+            const ctx = ctxs[S.activeLayer];
+            const tailStart = Math.max(0, brushStroke.length - BRUSH_TAPER_OUT_POINTS);
+            const tail = brushStroke.slice(tailStart);
+
+            ctx.globalCompositeOperation = 'destination-out';
+            ctx.lineCap = 'round';
+            for (let i = 1; i < tail.length; i++) {
+                ctx.lineWidth = tail[i].width + 3;
+                ctx.beginPath();
+                ctx.moveTo(tail[i - 1].x, tail[i - 1].y);
+                ctx.lineTo(tail[i].x, tail[i].y);
+                ctx.stroke();
+            }
+
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.strokeStyle = S.brushColor;
+            for (let i = 1; i < tail.length; i++) {
+                const t = i / (tail.length - 1); // 0 at the tail's start, 1 at the very last point
+                const taper = 1 - t;
+                ctx.lineWidth = Math.max(0.3, tail[i].width * (0.08 + taper * 0.92));
+                ctx.beginPath();
+                ctx.moveTo(tail[i - 1].x, tail[i - 1].y);
+                ctx.lineTo(tail[i].x, tail[i].y);
+                ctx.stroke();
+            }
+
+            brushStroke = [];
         }
 
         // Undo snapshots stored as PNG data URLs (~50-200KB each vs 3.7MB raw)
@@ -1044,6 +1141,9 @@
             // Ignore extra simultaneous pointers (second finger, resting palm)
             if (activePointer !== null) return;
 
+            // Brush is stylus-only — a mouse/finger has no pressure to taper with
+            if (S.tool === 'brush' && e.pointerType !== 'pen') return;
+
             updateCrosshair(e);
             const p = pos(e);
 
@@ -1057,7 +1157,15 @@
             activePointer = e.pointerId;
             topCanvas.setPointerCapture(e.pointerId);
             last = p;
-            drawSegment(p, { x: p.x + 0.01, y: p.y + 0.01 }, widthFor(e)); // dot on tap
+
+            if (S.tool === 'brush') {
+                brushStroke = [];
+                const w = widthFor(e) * brushTaperInFactor(0);
+                brushStroke.push({ x: p.x, y: p.y, width: w });
+                drawSegment(p, { x: p.x + 0.01, y: p.y + 0.01 }, w);
+            } else {
+                drawSegment(p, { x: p.x + 0.01, y: p.y + 0.01 }, widthFor(e)); // dot on tap
+            }
         });
 
         topCanvas.addEventListener('pointermove', e => {
@@ -1069,13 +1177,20 @@
             const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
             for (const ev of events) {
                 const p = pos(ev);
-                drawSegment(last, p, widthFor(ev));
+                if (S.tool === 'brush') {
+                    const w = widthFor(ev) * brushTaperInFactor(brushStroke.length);
+                    brushStroke.push({ x: p.x, y: p.y, width: w });
+                    drawSegment(last, p, w);
+                } else {
+                    drawSegment(last, p, widthFor(ev));
+                }
                 last = p;
             }
         });
 
         const stop = e => {
             if (e.pointerId === activePointer) {
+                if (S.tool === 'brush') finishBrushTaper();
                 activePointer = null;
                 last = null;
             }
@@ -1106,6 +1221,7 @@
                 btn.classList.toggle('bg-gray-100', btn.dataset.tool === tool);
             });
             topCanvas.style.cursor = tool === 'fill' ? 'cell' : 'crosshair';
+            document.getElementById('brushHint').classList.toggle('hidden', tool !== 'brush');
 
             const cfg = sizeConfigFor(tool);
             const slider = document.getElementById('sizeSlider');
@@ -1158,6 +1274,8 @@
         document.getElementById('sizeSlider').addEventListener('input', e => {
             const val = Number(e.target.value);
             if (S.tool === 'eraser') S.eraserSize = val;
+            else if (S.tool === 'pencil') S.pencilSize = val;
+            else if (S.tool === 'brush') S.brushSize = val;
             else S.penSize = val;
             document.getElementById('sizeLabel').textContent = val;
         });
