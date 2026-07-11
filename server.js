@@ -13,6 +13,35 @@ const data = require('./data.js');
 
 const PORT = process.env.PORT || 3000;
 
+// Background photos live in /photos and are named by the contributor —
+// either an Unsplash export ("first-last-<photoId>-unsplash.jpg") or a
+// simpler "first-last-filename.jpg" for future direct contributions.
+// Parsing the name from the filename means dropping a new photo in is
+// the entire workflow — no code change needed to add it to the rotation.
+const NAME_PARTICLES = new Set(['de', 'van', 'von', 'der', 'la', 'le', 'di', 'du', 'da']);
+
+function titleCaseName(tokens) {
+  return tokens
+    .map(w => NAME_PARTICLES.has(w.toLowerCase()) ? w.toLowerCase() : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function creditFromFilename(filename) {
+  const base = filename.replace(/\.[^.]+$/, '');
+  const parts = base.split('-').filter(Boolean);
+  if (parts.length === 0) return 'Unknown';
+
+  if (parts.length > 1 && parts[parts.length - 1].toLowerCase() === 'unsplash') {
+    // "...-<photoId>-unsplash" — drop the id and the "unsplash" tag
+    return titleCaseName(parts.slice(0, -2));
+  }
+  if (parts.length >= 3) {
+    // "first-last-filename" — first two tokens are the name, rest is discarded
+    return titleCaseName(parts.slice(0, 2));
+  }
+  return titleCaseName(parts);
+}
+
 // ===== In-memory game store =====
 const games = new Map();
 
@@ -189,6 +218,16 @@ function readBody(req, maxBytes, cb) {
 
 // ===== API =====
 function handleApi(req, res, url) {
+  // GET /api/photos — background photo pool for the auth-screen backdrop,
+  // with the contributor's name parsed from each filename.
+  if (url.pathname === '/api/photos' && req.method === 'GET') {
+    let files = [];
+    try {
+      files = fs.readdirSync(path.join(__dirname, 'photos')).filter(f => /\.(jpe?g|png|webp)$/i.test(f));
+    } catch (e) { /* no photos/ directory yet — empty pool, caller falls back to the gradient */ }
+    return json(res, 200, { photos: files.map(f => ({ file: f, credit: creditFromFilename(f) })) });
+  }
+
   // ===== STRIPE/PAYMENTS =====
   if (url.pathname === '/api/stripe/checkout' && req.method === 'POST') {
     return readBody(req, 10_000, async (err, body) => {

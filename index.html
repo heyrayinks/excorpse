@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Exquisite Corpse</title>
-    <link rel="icon" type="image/svg+xml" href="/Exquisite-corpse-logo.svg">
+    <link rel="icon" type="image/svg+xml" href="/graphics/Exquisite-corpse-logo.svg">
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -63,10 +63,35 @@
         .fade-in { animation: fadeIn 0.8s ease-in forwards; opacity: 0; }
         @keyframes fadeIn { to { opacity: 1; } }
         .layerBtn.active { background: #1f2937; color: white; }
+        /* Auth-style screens (home, signup, login, etc.) get a random photo from
+           /photos as their backdrop instead of a flat gradient — set once at boot
+           via the --app-bg-image custom property so every screen's template just
+           needs the .app-bg class, no per-template wiring. The dark gradient layer
+           keeps white cards readable regardless of which photo is showing; it
+           renders alone (over the purple fallback color) until JS sets the variable. */
+        :root { --app-bg-image: none; }
+        .app-bg {
+            background-color: #5b21b6;
+            background-size: cover;
+            background-position: center;
+            background-image: linear-gradient(rgba(0,0,0,.45), rgba(0,0,0,.45)), var(--app-bg-image);
+        }
+        #photoCredit {
+            position: fixed;
+            right: 10px;
+            bottom: 8px;
+            font-size: 11px;
+            color: rgba(255,255,255,.75);
+            text-shadow: 0 1px 2px rgba(0,0,0,.6);
+            z-index: 50;
+            pointer-events: none;
+            display: none;
+        }
     </style>
 </head>
 <body>
     <div id="app"></div>
+    <div id="photoCredit"></div>
 
     <script>
     // ================= STATE =================
@@ -77,6 +102,7 @@
         game: null,
         pollTimer: null,
         myGamesList: null,   // in-progress 'passthrough' games waiting on this player's turn, for the "continue a drawing" picker
+        bgCredit: null,      // photographer credit for the randomly-picked .app-bg photo, once loaded
         // drawing state
         tool: 'pen',           // pen | pencil | brush | eraser | fill — pencil/brush are paid-only
         brushColor: '#000000',
@@ -113,11 +139,11 @@
     const SECTION_LABELS = { head: 'Head', torso: 'Torso', legs: 'Legs' };
     // pencil/brush are paid-only — filtered out of the tool menu for free accounts.
     const TOOL_META = {
-        pen: { icon: '🖊️', label: 'Pen' },
-        pencil: { icon: '✏️', label: 'Pencil', paid: true },
-        brush: { icon: '🖌️', label: 'Brush', paid: true },
-        eraser: { icon: '🧽', label: 'Eraser' },
-        fill: { icon: '🪣', label: 'Fill' },
+        pen: { icon: '/graphics/Exquisite-corpse-tool-icons-04-PEN.svg', label: 'Pen' },
+        pencil: { icon: '/graphics/Exquisite-corpse-tool-icons-02-PENCIL.svg', label: 'Pencil', paid: true },
+        brush: { icon: '/graphics/Exquisite-corpse-tool-icons-03-BRUSH.svg', label: 'Brush', paid: true },
+        eraser: { icon: '/graphics/Exquisite-corpse-tool-icons-05-ERASER.svg', label: 'Eraser' },
+        fill: { icon: '/graphics/Exquisite-corpse-tool-icons-06-FILL.svg', label: 'Fill' },
     };
 
     // Every tool keeps its own independent size — eraser/brush default bigger
@@ -325,7 +351,7 @@
 
             if (needing.length === 1) {
                 const g = needing[0];
-                const label = g.continuingFrom ? `Continue ${escapeHtml(g.continuingFrom)}'s creature` : 'Continue your creature';
+                const label = g.continuingFrom ? `Continue ${escapeHtml(g.continuingFrom)}'s creation` : 'Continue your creation';
                 banner.innerHTML = `
                     <button id="continueSingleBtn" class="w-full mb-6 px-4 py-3 bg-amber-50 hover:bg-amber-100 border-2 border-amber-300 rounded-xl text-left flex items-center justify-between transition">
                         <span class="font-semibold text-amber-800">🎨 ${label} — ${SECTION_LABELS[g.section] || ''}</span>
@@ -351,7 +377,7 @@
     function renderMyGames() {
         const list = S.myGamesList || [];
         app.innerHTML = `
-        <div class="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-blue-500 p-4 flex items-center justify-center">
+        <div class="min-h-screen app-bg p-4 flex items-center justify-center">
             <div class="w-full max-w-md">
                 <div class="bg-white rounded-2xl shadow-2xl p-8">
                     <button id="myGamesBackBtn" class="text-sm text-gray-400 hover:text-gray-600 mb-4">&larr; Back</button>
@@ -361,7 +387,7 @@
                     <div class="space-y-3">
                         ${list.map((g, i) => `
                             <button data-idx="${i}" class="myGameBtn w-full px-4 py-3 bg-amber-50 hover:bg-amber-100 border-2 border-amber-300 rounded-xl text-left flex items-center justify-between transition">
-                                <span class="font-semibold text-amber-800">${g.continuingFrom ? `Continue ${escapeHtml(g.continuingFrom)}'s creature` : 'Continue your creature'} — ${SECTION_LABELS[g.section] || ''}</span>
+                                <span class="font-semibold text-amber-800">${g.continuingFrom ? `Continue ${escapeHtml(g.continuingFrom)}'s creation` : 'Continue your creation'} — ${SECTION_LABELS[g.section] || ''}</span>
                                 <span class="text-amber-600">&rarr;</span>
                             </button>
                         `).join('')}
@@ -444,7 +470,7 @@
                 S.screen = 'results';
                 stopPolling();
                 render();
-                maybeNotify('The reveal is ready! 🎉', 'All artists are done — come see the creatures.');
+                maybeNotify('The reveal is ready! 🎉', 'All artists are done — come see the creations.');
             }
         }
     }
@@ -567,13 +593,14 @@
         else if (S.screen === 'checkoutPending') renderCheckoutPending();
         else if (S.screen === 'about') renderAbout();
         else if (S.screen === 'myGames') renderMyGames();
+        updatePhotoCredit();
     }
 
     // ---------- HOME ----------
     function renderHome() {
         const urlCode = new URLSearchParams(location.search).get('code') || '';
         app.innerHTML = `
-        <div class="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-blue-500 p-4 flex items-center justify-center">
+        <div class="min-h-screen app-bg p-4 flex items-center justify-center">
             <div class="w-full max-w-md">
                 <div class="flex justify-end mb-2 px-1">
                     ${S.authToken && S.user ? `
@@ -593,10 +620,10 @@
                 <div class="bg-white rounded-2xl shadow-2xl p-8">
                     <div class="text-center mb-6">
                         <h1 class="text-4xl font-bold text-gray-900 mb-2 flex flex-col items-center gap-2">
-                            <img src="/Exquisite-corpse-logo.svg" alt="Exquisite Corpse logo" class="h-24 w-24">
+                            <img src="/graphics/Exquisite-corpse-logo.svg" alt="Exquisite Corpse logo" class="h-24 w-24">
                             Exquisite Corpse
                         </h1>
-                        <p class="text-gray-600">2-20 artists. A creature each. Zero spoilers.</p>
+                        <p class="text-gray-600">2-20 artists. A creation each. Zero spoilers.</p>
                         <button id="aboutLink" type="button" class="text-xs text-purple-500 hover:text-purple-700 hover:underline">Why the name Exquisite Corpse?</button>
                     </div>
 
@@ -608,7 +635,7 @@
                         <p class="text-sm text-gray-700">
                             Everyone draws at once! Round 1: everyone draws a <b>head</b>.
                             Then sheets rotate — draw a <b>torso</b> on someone else's sheet (you only see the edge!),
-                            then <b>legs</b>. At the end: one gloriously weird creature per artist.
+                            then <b>legs</b>. At the end: one gloriously weird creation per artist.
                         </p>
                     </div>
 
@@ -638,7 +665,7 @@
                         <div class="mb-3">
                             <label class="block text-xs font-medium text-gray-500 mb-1">Number of artists: <b><span id="playerCountValue">3</span></b></label>
                             <input id="playerCountSlider" type="range" min="2" max="20" value="3" class="w-full">
-                            <p id="playerCountHint" class="text-xs text-gray-500 mt-1.5">Everyone draws every round — more artists means more creatures, not a longer game.</p>
+                            <p id="playerCountHint" class="text-xs text-gray-500 mt-1.5">Everyone draws every round — more artists means more creations, not a longer game.</p>
                         </div>
 
                         <div class="space-y-2 mb-3">
@@ -723,7 +750,7 @@
             } else {
                 hint.textContent = n === '2'
                     ? 'With 2 players, your sheets simply swap back and forth each round.'
-                    : 'Everyone draws every round — more artists means more creatures, not a longer game.';
+                    : 'Everyone draws every round — more artists means more creations, not a longer game.';
             }
         }
         document.querySelectorAll('input[name="mode"]').forEach(r => {
@@ -816,7 +843,7 @@
     // ---------- ABOUT ----------
     function renderAbout() {
         app.innerHTML = `
-        <div class="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-blue-500 p-4 flex items-center justify-center">
+        <div class="min-h-screen app-bg p-4 flex items-center justify-center">
             <div class="w-full max-w-2xl">
                 <div class="bg-white rounded-2xl shadow-2xl p-8">
                     <button id="aboutBackBtn" class="text-sm text-gray-400 hover:text-gray-600 mb-4">&larr; Back</button>
@@ -994,12 +1021,16 @@
             <div class="flex items-center gap-3 px-4 py-2 bg-white border-t border-gray-100 shadow-sm shrink-0 flex-wrap">
                 <div class="relative">
                     <button id="toolTrigger" class="px-3 py-1.5 rounded-lg border border-gray-300 text-sm font-semibold flex items-center gap-1.5" title="Drawing tool">
-                        <span id="toolTriggerLabel">${TOOL_META[S.tool].icon} ${TOOL_META[S.tool].label}</span>
+                        <img id="toolTriggerIcon" src="${TOOL_META[S.tool].icon}" alt="" class="w-6 h-6 object-contain">
+                        <span id="toolTriggerLabel">${TOOL_META[S.tool].label}</span>
                         <span class="text-gray-400 text-[10px]">▾</span>
                     </button>
-                    <div id="toolMenu" class="hidden absolute left-0 top-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-20 overflow-hidden" style="min-width:130px">
+                    <div id="toolMenu" class="hidden absolute left-0 top-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-20 overflow-hidden" style="min-width:150px">
                         ${Object.entries(TOOL_META).filter(([, meta]) => !meta.paid || (S.authToken && S.user && S.user.paid)).map(([tool, meta]) => `
-                            <button data-tool="${tool}" class="toolMenuItem block w-full text-left px-3 py-2 text-sm font-semibold hover:bg-gray-100 ${tool === S.tool ? 'bg-gray-100' : ''}">${meta.icon} ${meta.label}</button>
+                            <button data-tool="${tool}" class="toolMenuItem w-full text-left px-3 py-2 text-sm font-semibold hover:bg-gray-100 flex items-center gap-2 ${tool === S.tool ? 'bg-gray-100' : ''}">
+                                <img src="${meta.icon}" alt="" class="w-6 h-6 object-contain">
+                                <span>${meta.label}</span>
+                            </button>
                         `).join('')}
                     </div>
                 </div>
@@ -1343,10 +1374,12 @@
         const toolTrigger = document.getElementById('toolTrigger');
         const toolMenu = document.getElementById('toolMenu');
         const toolTriggerLabel = document.getElementById('toolTriggerLabel');
+        const toolTriggerIcon = document.getElementById('toolTriggerIcon');
 
         function selectTool(tool) {
             S.tool = tool;
-            toolTriggerLabel.textContent = `${TOOL_META[tool].icon} ${TOOL_META[tool].label}`;
+            toolTriggerIcon.src = TOOL_META[tool].icon;
+            toolTriggerLabel.textContent = TOOL_META[tool].label;
             document.querySelectorAll('.toolMenuItem').forEach(btn => {
                 btn.classList.toggle('bg-gray-100', btn.dataset.tool === tool);
             });
@@ -1683,11 +1716,11 @@
         const gridMaxW = sheets.length <= 3 ? 'max-w-3xl' : 'max-w-6xl';
 
         app.innerHTML = `
-        <div class="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-blue-500 p-4 py-10">
+        <div class="min-h-screen app-bg p-4 py-10">
             <div class="max-w-6xl mx-auto">
                 <div class="text-center mb-8">
                     <h1 class="text-4xl font-bold text-white mb-2">🎉 The Big Reveal!</h1>
-                    <p class="text-purple-100">${sheets.length} creature${sheets.length === 1 ? '' : 's'}, born from chaos.</p>
+                    <p class="text-purple-100">${sheets.length} creation${sheets.length === 1 ? '' : 's'}, born from chaos.</p>
                 </div>
 
                 <div class="grid gap-6 ${gridCols} ${gridMaxW} mx-auto">
@@ -1730,7 +1763,7 @@
 
                 ${sheets.length >= 2 ? `
                 <div class="max-w-md mx-auto mt-6 text-center space-y-2">
-                    <p class="text-white/90 text-sm mb-2">Tap up to 3 creatures above to combine them onto one sheet</p>
+                    <p class="text-white/90 text-sm mb-2">Tap up to 3 creations above to combine them onto one sheet</p>
                     <button id="downloadMultipleBtn" class="w-full px-4 py-3 bg-white/20 text-white/50 font-semibold rounded-xl border border-white/40 cursor-not-allowed" disabled>
                         📥 Download Multiple (<span id="selectedCount">0</span>/3 selected)
                     </button>
@@ -2062,7 +2095,7 @@
     // ---------- SIGNUP ----------
     function renderSignup() {
         app.innerHTML = `
-        <div class="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-blue-500 p-4 flex items-center justify-center">
+        <div class="min-h-screen app-bg p-4 flex items-center justify-center">
             <div class="w-full max-w-md">
                 <div class="bg-white rounded-2xl shadow-2xl p-8">
                     <button id="backHomeBtn" class="text-sm text-gray-400 hover:text-gray-600 mb-4">&larr; Back</button>
@@ -2176,7 +2209,7 @@
     // ---------- CHECKOUT PENDING (after Stripe redirect) ----------
     function renderCheckoutPending() {
         app.innerHTML = `
-        <div class="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-blue-500 p-4 flex items-center justify-center">
+        <div class="min-h-screen app-bg p-4 flex items-center justify-center">
             <div class="w-full max-w-md">
                 <div class="bg-white rounded-2xl shadow-2xl p-8 text-center">
                     <div class="text-5xl mb-4 animate-bounce">🎉</div>
@@ -2230,7 +2263,7 @@
     // ---------- LOGIN ----------
     function renderLogin() {
         app.innerHTML = `
-        <div class="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-blue-500 p-4 flex items-center justify-center">
+        <div class="min-h-screen app-bg p-4 flex items-center justify-center">
             <div class="w-full max-w-md">
                 <div class="bg-white rounded-2xl shadow-2xl p-8">
                     <button id="backHomeBtn" class="text-sm text-gray-400 hover:text-gray-600 mb-4">&larr; Back</button>
@@ -2436,7 +2469,7 @@
                                     <button class="removeFavBtn absolute top-1 right-1 w-6 h-6 bg-red-500 hover:bg-red-600 text-white text-xs rounded-full opacity-0 group-hover:opacity-100 transition" data-fav-id="${fav.id}">✕</button>
                                     ${renderCommentThread(fav.comments || [], `fav:${fav.id}`, u.id)}
                                 </div>
-                            `).join('') : `<p class="col-span-3 text-sm text-gray-400 italic">No favorites saved yet — finish a game and save your favorite creature!</p>`}
+                            `).join('') : `<p class="col-span-3 text-sm text-gray-400 italic">No favorites saved yet — finish a game and save your favorite creation!</p>`}
                         </div>
                         ${u.favorites.length >= 2 ? `
                             <p class="text-xs text-gray-500 mt-3 mb-1.5 text-center">Tap up to 3 favorites to combine them onto one printable sheet</p>
@@ -2823,8 +2856,34 @@
         });
     }
 
+    // ================= BACKGROUND PHOTO =================
+    // Screens using the .app-bg class (see <style>) show a random photo from
+    // /photos instead of a flat gradient, picked once per page load so it stays
+    // consistent as the user navigates. Falls back to the plain gradient color
+    // if /photos is empty or the fetch fails — never blocks the rest of boot.
+    const PHOTO_BG_SCREENS = new Set(['home', 'signup', 'login', 'about', 'checkoutPending', 'myGames', 'results']);
+
+    function updatePhotoCredit() {
+        const el = document.getElementById('photoCredit');
+        if (!el) return;
+        el.style.display = (S.bgCredit && PHOTO_BG_SCREENS.has(S.screen)) ? 'block' : 'none';
+    }
+
+    async function loadBackgroundPhoto() {
+        try {
+            const { photos } = await api('/photos');
+            if (!photos || !photos.length) return;
+            const pick = photos[Math.floor(Math.random() * photos.length)];
+            document.documentElement.style.setProperty('--app-bg-image', `url('/photos/${encodeURIComponent(pick.file)}')`);
+            S.bgCredit = pick.credit;
+            document.getElementById('photoCredit').textContent = `Photo: ${pick.credit}`;
+            updatePhotoCredit();
+        } catch (e) { /* non-critical — leave the plain gradient color */ }
+    }
+
     // ================= BOOT =================
     (async function boot() {
+        loadBackgroundPhoto();
         // Returning from Stripe checkout takes priority over game-session restore
         if (new URLSearchParams(location.search).get('checkout') === 'success') {
             S.screen = 'checkoutPending';
