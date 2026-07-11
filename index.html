@@ -172,6 +172,9 @@
     const OUTPUT_H = BASE_CANVAS_H * PAID_RENDER_SCALE;   // 3300
     const OUTPUT_EDGE_H = BASE_EDGE_H * PAID_RENDER_SCALE; // 120
     const MAX_FAVORITES = 15;    // must match MAX_FAVORITES in data.js
+    // Temporary kill switch for the paid signup path (e.g. while Stripe keys are
+    // being rotated) — flip back to true to restore the normal $2.99 flow.
+    const SIGNUP_PAYMENTS_ENABLED = false;
     let CANVAS_W = BASE_CANVAS_W, CANVAS_H = BASE_CANVAS_H, EDGE_H = BASE_EDGE_H;
     let RENDER_SCALE = 1;
 
@@ -1773,7 +1776,9 @@
                     <button id="backHomeBtn" class="text-sm text-gray-400 hover:text-gray-600 mb-4">&larr; Back</button>
                     <div class="text-center mb-6">
                         <h1 class="text-3xl font-bold text-gray-900 mb-2">Create Account</h1>
-                        <p class="text-gray-600 text-sm">$2.99 one-time. Unlocks your account, print-quality (300 DPI) drawings, and a 15-drawing favorites shelf. No subscription, ever.</p>
+                        <p class="text-gray-600 text-sm">${SIGNUP_PAYMENTS_ENABLED
+                            ? '$2.99 one-time. Unlocks your account, print-quality (300 DPI) drawings, and a 15-drawing favorites shelf. No subscription, ever.'
+                            : 'Account creation is invite-only right now — enter your beta code below.'}</p>
                     </div>
 
                     ${S.authError ? `<div class="mb-4 p-3 bg-red-50 border border-red-300 text-red-700 rounded-lg text-sm">${S.authError}</div>` : ''}
@@ -1786,13 +1791,19 @@
                     </div>
                     <p class="text-xs text-gray-400 mb-4">There's no password reset yet — keep this password somewhere safe.</p>
 
-                    <button id="betaToggleBtn" type="button" class="text-xs text-gray-400 hover:text-gray-600 mb-3">Have a beta code?</button>
-                    <div id="betaCodeWrap" class="hidden mb-3">
-                        <input id="suBetaCode" type="text" placeholder="Beta code" class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500 text-sm">
-                    </div>
+                    ${SIGNUP_PAYMENTS_ENABLED ? `
+                        <button id="betaToggleBtn" type="button" class="text-xs text-gray-400 hover:text-gray-600 mb-3">Have a beta code?</button>
+                        <div id="betaCodeWrap" class="hidden mb-3">
+                            <input id="suBetaCode" type="text" placeholder="Beta code" class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500 text-sm">
+                        </div>
+                    ` : `
+                        <div id="betaCodeWrap" class="mb-3">
+                            <input id="suBetaCode" type="text" placeholder="Beta code" class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500 text-sm">
+                        </div>
+                    `}
 
                     <button id="suSubmitBtn" class="w-full px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-bold rounded-xl text-lg transition">
-                        Continue to Payment — $2.99
+                        ${SIGNUP_PAYMENTS_ENABLED ? 'Continue to Payment — $2.99' : 'Redeem Beta Code'}
                     </button>
 
                     <p class="text-center text-sm text-gray-500 mt-4">
@@ -1812,14 +1823,16 @@
         const submitBtn = document.getElementById('suSubmitBtn');
         const betaInput = document.getElementById('suBetaCode');
 
-        document.getElementById('betaToggleBtn').addEventListener('click', () => {
-            document.getElementById('betaCodeWrap').classList.remove('hidden');
-            document.getElementById('betaToggleBtn').classList.add('hidden');
-            betaInput.focus();
-        });
-        betaInput.addEventListener('input', () => {
-            submitBtn.textContent = betaInput.value.trim() ? 'Redeem Beta Code' : 'Continue to Payment — $2.99';
-        });
+        if (SIGNUP_PAYMENTS_ENABLED) {
+            document.getElementById('betaToggleBtn').addEventListener('click', () => {
+                document.getElementById('betaCodeWrap').classList.remove('hidden');
+                document.getElementById('betaToggleBtn').classList.add('hidden');
+                betaInput.focus();
+            });
+            betaInput.addEventListener('input', () => {
+                submitBtn.textContent = betaInput.value.trim() ? 'Redeem Beta Code' : 'Continue to Payment — $2.99';
+            });
+        }
 
         submitBtn.addEventListener('click', async () => {
             const email = document.getElementById('suEmail').value.trim();
@@ -1831,6 +1844,7 @@
             if (!email || !username || !password) return showSignupError('All fields are required.');
             if (password.length < 8) return showSignupError('Password must be at least 8 characters.');
             if (password !== passwordConfirm) return showSignupError('Passwords do not match.');
+            if (!SIGNUP_PAYMENTS_ENABLED && !betaCode) return showSignupError('A beta code is required right now.');
 
             submitBtn.disabled = true;
 
