@@ -1021,14 +1021,14 @@
             <div class="flex items-center gap-3 px-4 py-2 bg-white border-t border-gray-100 shadow-sm shrink-0 flex-wrap">
                 <div class="relative">
                     <button id="toolTrigger" class="px-3 py-1.5 rounded-lg border border-gray-300 text-sm font-semibold flex items-center gap-1.5" title="Drawing tool">
-                        <img id="toolTriggerIcon" src="${TOOL_META[S.tool].icon}" alt="" class="w-6 h-6 object-contain">
+                        <img id="toolTriggerIcon" src="${TOOL_META[S.tool].icon}" alt="" class="w-12 h-12 object-contain">
                         <span id="toolTriggerLabel">${TOOL_META[S.tool].label}</span>
                         <span class="text-gray-400 text-[10px]">▾</span>
                     </button>
                     <div id="toolMenu" class="hidden absolute left-0 top-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-20 overflow-hidden" style="min-width:150px">
                         ${Object.entries(TOOL_META).filter(([, meta]) => !meta.paid || (S.authToken && S.user && S.user.paid)).map(([tool, meta]) => `
                             <button data-tool="${tool}" class="toolMenuItem w-full text-left px-3 py-2 text-sm font-semibold hover:bg-gray-100 flex items-center gap-2 ${tool === S.tool ? 'bg-gray-100' : ''}">
-                                <img src="${meta.icon}" alt="" class="w-6 h-6 object-contain">
+                                <img src="${meta.icon}" alt="" class="w-12 h-12 object-contain">
                                 <span>${meta.label}</span>
                             </button>
                         `).join('')}
