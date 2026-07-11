@@ -1443,7 +1443,7 @@
             document.getElementById('sizeLabel').textContent = val;
         });
 
-        document.getElementById('undoBtn').addEventListener('click', () => {
+        function performUndo() {
             const layer = S.activeLayer;
             const snap = S.undoStacks[layer].pop();
             if (!snap) return;
@@ -1455,7 +1455,21 @@
                 ctx.drawImage(img, 0, 0);
             };
             img.src = snap;
-        });
+        }
+        document.getElementById('undoBtn').addEventListener('click', performUndo);
+
+        // Ctrl+Z (Windows/Linux) or Cmd+Z (Mac) — not the Shift variant (redo),
+        // since there's no redo stack to pair it with. Plain assignment (not
+        // addEventListener) so re-running setupCanvas each round replaces the
+        // old handler instead of stacking a new one, same as document.onclick
+        // below; the screen check keeps it inert once the user navigates away.
+        document.onkeydown = e => {
+            if (S.screen !== 'draw') return;
+            if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+                e.preventDefault();
+                performUndo();
+            }
+        };
         document.getElementById('clearBtn').addEventListener('click', () => {
             pushUndo();
             ctxs[S.activeLayer].clearRect(0, 0, CANVAS_W, CANVAS_H);
