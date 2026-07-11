@@ -182,6 +182,9 @@ function myActiveGames(userId, excludeCode) {
       needsSubmission,
       waitingForPlayers: game.players.length < game.maxPlayers,
       continuingFrom,
+      // Every other artist currently on this chain, in join order — lets the
+      // "Open games" list show who's actually joined once someone accepts.
+      otherArtists: game.players.filter(p => p.id !== player.id).map(p => p.name),
     });
   }
   return result;
