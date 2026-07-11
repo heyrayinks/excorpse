@@ -701,11 +701,16 @@
                             <li><a href="https://en.wikipedia.org/wiki/Exquisite_corpse" target="_blank" rel="noopener noreferrer" class="text-purple-600 hover:underline">Wikipedia — Exquisite corpse</a></li>
                         </ul>
                     </div>
+
+                    <button id="aboutPlayBtn" class="w-full mt-8 px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-bold rounded-xl text-lg transition">
+                        🎨 Play a Game
+                    </button>
                 </div>
             </div>
         </div>`;
 
         document.getElementById('aboutBackBtn').addEventListener('click', () => { S.screen = 'home'; render(); });
+        document.getElementById('aboutPlayBtn').addEventListener('click', () => { S.screen = 'home'; render(); });
     }
 
     // ---------- LOBBY ----------
