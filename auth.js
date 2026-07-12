@@ -97,16 +97,16 @@ exports.tryExtractUserId = (req) => {
   }
 };
 
-// Login endpoint logic — accepts either email or username as the identifier,
-// since that's what most people expect and mistyping one for the other
-// (or browser autofill mixing them up) shouldn't produce a confusing failure.
+// Login endpoint logic — email only. Username is a mutable display identity
+// (renameable in account settings), so keying login off it meant a rename
+// silently broke anyone whose browser had autofilled the old username.
 exports.handleLogin = async (body) => {
   const { email, password } = body;
   if (!email || !password) {
     throw { status: 400, error: 'Email and password required' };
   }
 
-  const user = data.getUserByEmail(email) || data.getUserByUsername(email);
+  const user = data.getUserByEmail(email);
   if (!user) {
     throw { status: 401, error: 'Invalid credentials' };
   }
