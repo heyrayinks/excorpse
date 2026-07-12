@@ -206,7 +206,7 @@
 
     // Curated pick list for the lobby-icon emoji picker — kept small and fun
     // rather than a full system picker, since this is just personality, not identity.
-    const EMOJI_CHOICES = ['🧑‍🎨', '😀', '😎', '🤓', '🥳', '🤠', '👻', '🤖', '👽', '🐶', '🐱', '🦊', '🐼', '🦁', '🐸', '🐙', '🦄', '🐲', '🍕', '🍩', '🎨', '🎩', '🚀', '⭐', '🔥', '🌈', '🍄', '🌵', '👑', '🎃'];
+    const EMOJI_CHOICES = ['🎨', '😀', '😎', '🤓', '🥳', '🤠', '👻', '🤖', '👽', '🐶', '🐱', '🦊', '🐼', '🦁', '🐸', '🐙', '🦄', '🐲', '🍕', '🍩', '🎩', '🚀', '⭐', '🔥', '🌈', '🍄', '🌵', '👑', '🎃'];
     // Resolves to the picked emoji, or null if the user backs out — matches
     // showConfirmModal's overlay-appended-to-body pattern so it works from any screen.
     function showEmojiPicker() {
@@ -240,7 +240,7 @@
                 <img src="${S.user.avatarDataUrl}" class="w-full h-full object-cover">
             </div>`;
         }
-        return `<button type="button" id="${idPrefix}EmojiBtn" class="emojiPickerBtn w-10 h-10 shrink-0 text-xl rounded-full border-2 border-gray-200 hover:border-[#ffec06] flex items-center justify-center transition-transform" title="Pick your icon">${escapeHtml(S.emoji || '🧑‍🎨')}</button>`;
+        return `<button type="button" id="${idPrefix}EmojiBtn" class="emojiPickerBtn w-10 h-10 shrink-0 text-xl rounded-full border-2 border-gray-200 hover:border-[#ffec06] flex items-center justify-center transition-transform" title="Pick your icon">${escapeHtml(S.emoji || '🎨')}</button>`;
     }
 
     // Brief press animation + label swap on copy-to-clipboard buttons so the user
@@ -1043,7 +1043,7 @@
             const isYou = p && g.you && p.order === g.you.order;
             const icon = !p ? `<span class="text-2xl">💤</span>`
                 : p.avatarDataUrl ? `<img src="${p.avatarDataUrl}" class="w-8 h-8 rounded-full object-cover">`
-                : `<span class="text-2xl">${p.emoji || '🧑‍🎨'}</span>`;
+                : `<span class="text-2xl">${p.emoji || '🎨'}</span>`;
             return `
             <div class="p-4 rounded-xl border-2 ${p ? 'bg-[#fffce8] border-[#ffec06]' : 'bg-gray-50 border-dashed border-gray-300'}">
                 <div class="flex items-center justify-between">
