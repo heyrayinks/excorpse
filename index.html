@@ -661,7 +661,7 @@
                         <div class="flex flex-wrap gap-2">
                             <input id="joinCode" type="text" maxlength="6" placeholder="CODE" value="${urlCode}"
                                 class="w-24 px-3 py-2 border-2 border-gray-300 rounded-lg font-mono uppercase text-center focus:outline-none focus:border-[#ffec06]">
-                            <input id="joinName" type="text" maxlength="30" placeholder="Your name"
+                            <input id="joinName" type="text" maxlength="30" placeholder="Your name" value="${S.authToken && S.user ? escapeHtml(S.user.username) : ''}"
                                 class="flex-1 min-w-0 px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-[#ffec06]">
                             <button id="joinBtn" class="w-full sm:w-auto px-4 py-2 bg-[#ffec06] hover:bg-[#e6d405] text-black font-semibold rounded-lg">Join</button>
                         </div>
@@ -675,7 +675,7 @@
 
                     <!-- CREATE -->
                     <div class="mb-4">
-                        <input id="createName" type="text" maxlength="30" placeholder="Your name"
+                        <input id="createName" type="text" maxlength="30" placeholder="Your name" value="${S.authToken && S.user ? escapeHtml(S.user.username) : ''}"
                             class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500 mb-3">
 
                         <div class="mb-3">
