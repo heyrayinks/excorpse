@@ -1257,6 +1257,7 @@
         let activePointer = null;   // only one finger/pen draws at a time
         let penSeen = false;        // once a stylus is used, ignore finger touches (palm rejection)
         let last = null;            // previous point for segment drawing
+        let lastWidth = 0;          // previous point's line width, so segments can taper smoothly between them
 
         function pos(e) {
             const rect = topCanvas.getBoundingClientRect();
@@ -1291,21 +1292,44 @@
             return base;
         }
 
-        function drawSegment(from, to, width) {
+        // Subdivides a segment into short steps that interpolate width linearly.
+        // A fast stroke can jump a long distance between two pointer samples —
+        // stroking that whole jump as one segment leaves the round cap's radius
+        // changing abruptly from the previous segment's, which reads as a stray
+        // "blob" wherever pressure/taper made the width shift a lot between
+        // samples. Shorter interpolated steps keep consecutive caps blending
+        // into each other instead of stacking into a lump.
+        function strokeTaperedSegment(ctx, from, to, fromWidth, toWidth) {
+            const dx = to.x - from.x, dy = to.y - from.y;
+            const dist = Math.hypot(dx, dy);
+            const maxWidth = Math.max(fromWidth, toWidth, 1);
+            const step = Math.max(1, maxWidth * 0.5);
+            const steps = Math.max(1, Math.ceil(dist / step));
+            let px = from.x, py = from.y;
+            for (let i = 1; i <= steps; i++) {
+                const t = i / steps;
+                const x = from.x + dx * t;
+                const y = from.y + dy * t;
+                ctx.lineWidth = fromWidth + (toWidth - fromWidth) * t;
+                ctx.beginPath();
+                ctx.moveTo(px, py);
+                ctx.lineTo(x, y);
+                ctx.stroke();
+                px = x; py = y;
+            }
+        }
+
+        function drawSegment(from, to, fromWidth, toWidth) {
             const ctx = ctxs[S.activeLayer];
             ctx.globalCompositeOperation = S.tool === 'eraser' ? 'destination-out' : 'source-over';
 
             if (S.tool === 'pencil') {
-                drawGrainySegment(ctx, from, to, width);
+                drawGrainySegment(ctx, from, to, (fromWidth + toWidth) / 2);
                 return;
             }
 
             ctx.strokeStyle = S.brushColor;
-            ctx.lineWidth = width;
-            ctx.beginPath();
-            ctx.moveTo(from.x, from.y);
-            ctx.lineTo(to.x, to.y);
-            ctx.stroke();
+            strokeTaperedSegment(ctx, from, to, fromWidth, toWidth);
         }
 
         // Scatters small jittered, semi-transparent specks along the segment
@@ -1360,23 +1384,18 @@
             ctx.globalCompositeOperation = 'destination-out';
             ctx.lineCap = 'round';
             for (let i = 1; i < tail.length; i++) {
-                ctx.lineWidth = tail[i].width + 3;
-                ctx.beginPath();
-                ctx.moveTo(tail[i - 1].x, tail[i - 1].y);
-                ctx.lineTo(tail[i].x, tail[i].y);
-                ctx.stroke();
+                strokeTaperedSegment(ctx, tail[i - 1], tail[i], tail[i - 1].width + 3, tail[i].width + 3);
             }
 
             ctx.globalCompositeOperation = 'source-over';
             ctx.strokeStyle = S.brushColor;
+            // 0 at the tail's start, 1 at the very last point
+            const taperedWidths = tail.map((pt, i) => {
+                const taper = 1 - i / (tail.length - 1);
+                return Math.max(0.3, pt.width * (0.08 + taper * 0.92));
+            });
             for (let i = 1; i < tail.length; i++) {
-                const t = i / (tail.length - 1); // 0 at the tail's start, 1 at the very last point
-                const taper = 1 - t;
-                ctx.lineWidth = Math.max(0.3, tail[i].width * (0.08 + taper * 0.92));
-                ctx.beginPath();
-                ctx.moveTo(tail[i - 1].x, tail[i - 1].y);
-                ctx.lineTo(tail[i].x, tail[i].y);
-                ctx.stroke();
+                strokeTaperedSegment(ctx, tail[i - 1], tail[i], taperedWidths[i - 1], taperedWidths[i]);
             }
 
             brushStroke = [];
@@ -1420,9 +1439,12 @@
                 lastBrushPressure = e.pressure > 0 ? e.pressure : 0.5;
                 const w = widthFor(e) * brushTaperInFactor(0);
                 brushStroke.push({ x: p.x, y: p.y, width: w });
-                drawSegment(p, { x: p.x + 0.01, y: p.y + 0.01 }, w);
+                drawSegment(p, { x: p.x + 0.01, y: p.y + 0.01 }, w, w);
+                lastWidth = w;
             } else {
-                drawSegment(p, { x: p.x + 0.01, y: p.y + 0.01 }, widthFor(e)); // dot on tap
+                const w = widthFor(e);
+                drawSegment(p, { x: p.x + 0.01, y: p.y + 0.01 }, w, w); // dot on tap
+                lastWidth = w;
             }
         });
 
@@ -1437,9 +1459,12 @@
                 if (S.tool === 'brush') {
                     const w = widthFor(ev) * brushTaperInFactor(brushStroke.length);
                     brushStroke.push({ x: p.x, y: p.y, width: w });
-                    drawSegment(last, p, w);
+                    drawSegment(last, p, lastWidth, w);
+                    lastWidth = w;
                 } else {
-                    drawSegment(last, p, widthFor(ev));
+                    const w = widthFor(ev);
+                    drawSegment(last, p, lastWidth, w);
+                    lastWidth = w;
                 }
                 last = p;
             }
