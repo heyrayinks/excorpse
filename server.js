@@ -74,13 +74,16 @@ function generateCode() {
 }
 
 // Shared by the anonymous /join handler and the friend-invite accept handler.
-function addPlayerToGame(game, name, userId) {
+function addPlayerToGame(game, name, userId, emoji) {
   const player = {
     id: crypto.randomUUID(),
     name,
     order: game.players.length + 1,
     submissions: {}, // round -> true
     userId: userId || null,
+    // Freeform, not validated against an allowlist — worst case someone sees a
+    // couple of stray characters next to their name in the lobby, no real harm.
+    emoji: emoji ? String(emoji).trim().slice(0, 8) : null,
   };
   game.players.push(player);
   return player;
@@ -95,6 +98,18 @@ const SECTIONS = ['head', 'torso', 'legs']; // section drawn in round 1, 2, 3 (a
 // game, just without requiring everyone online together (see /join and /submit).
 function sheetForPlayer(playerOrder, round, maxPlayers) {
   return (playerOrder - 1 + round - 1) % maxPlayers;
+}
+
+// A paid account's uploaded avatar image outranks their picked emoji — same
+// premium perk as the account page, just surfaced in the lobby's player list too.
+function playerIcon(p) {
+  if (p.userId) {
+    const user = data.getUserById(p.userId);
+    if (user && user.paid && user.avatarDataUrl) {
+      return { avatarDataUrl: user.avatarDataUrl, emoji: p.emoji || null };
+    }
+  }
+  return { avatarDataUrl: null, emoji: p.emoji || null };
 }
 
 function publicState(game, playerId) {
@@ -119,6 +134,7 @@ function publicState(game, playerId) {
     players: game.players.map(p => ({
       name: p.name,
       order: p.order,
+      ...playerIcon(p),
       submitted: round ? !!p.submissions[round] : false,
     })),
     you: null,
@@ -128,6 +144,7 @@ function publicState(game, playerId) {
     state.you = {
       name: player.name,
       order: player.order,
+      ...playerIcon(player),
       submitted: round ? !!player.submissions[round] : false,
     };
 
@@ -729,7 +746,7 @@ function handleApi(req, res, url) {
         }
       }
 
-      const player = addPlayerToGame(game, name, joinerUserId);
+      const player = addPlayerToGame(game, name, joinerUserId, body.emoji);
       game.lastActivityAt = Date.now();
 
       // 'passthrough' has no lobby/Start step — the very first join IS round 1 starting.

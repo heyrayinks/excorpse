@@ -94,6 +94,7 @@
         chainSessionList: [], // { code, inspiration } for each 'passthrough' chain started this browser session, for the share-link summary
         myOpenGames: null,   // every in-progress 'passthrough' game this account is a player in, for the account page's "Open games" section
         bgCredit: null,      // photographer credit for the randomly-picked .app-bg photo, once loaded
+        emoji: localStorage.getItem('ec_emoji') || null, // player's chosen lobby icon, anon or logged in — remembered across sessions
         // drawing state
         tool: 'pen',           // pen | pencil | brush | eraser | fill — pencil/brush are paid-only
         brushColor: '#000000',
@@ -201,6 +202,60 @@
             overlay.querySelector('.confirmModalCancelBtn').addEventListener('click', () => close(false));
             overlay.querySelector('.confirmModalOkBtn').addEventListener('click', () => close(true));
         });
+    }
+
+    // Curated pick list for the lobby-icon emoji picker — kept small and fun
+    // rather than a full system picker, since this is just personality, not identity.
+    const EMOJI_CHOICES = ['🧑‍🎨', '😀', '😎', '🤓', '🥳', '🤠', '👻', '🤖', '👽', '🐶', '🐱', '🦊', '🐼', '🦁', '🐸', '🐙', '🦄', '🐲', '🍕', '🍩', '🎨', '🎩', '🚀', '⭐', '🔥', '🌈', '🍄', '🌵', '👑', '🎃'];
+    // Resolves to the picked emoji, or null if the user backs out — matches
+    // showConfirmModal's overlay-appended-to-body pattern so it works from any screen.
+    function showEmojiPicker() {
+        return new Promise(resolve => {
+            const overlay = document.createElement('div');
+            overlay.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4';
+            overlay.innerHTML = `
+                <div class="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+                    <p class="text-gray-700 font-semibold mb-3 text-center">Pick your icon</p>
+                    <div class="grid grid-cols-6 gap-2 mb-4">
+                        ${EMOJI_CHOICES.map(e => `<button class="emojiChoiceBtn text-2xl p-2 rounded-lg hover:bg-gray-100 transition-transform">${e}</button>`).join('')}
+                    </div>
+                    <button class="emojiCancelBtn w-full px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl">Cancel</button>
+                </div>`;
+            document.body.appendChild(overlay);
+            const close = result => { overlay.remove(); resolve(result); };
+            overlay.addEventListener('click', e => { if (e.target === overlay) close(null); });
+            overlay.querySelector('.emojiCancelBtn').addEventListener('click', () => close(null));
+            overlay.querySelectorAll('.emojiChoiceBtn').forEach(btn => {
+                btn.addEventListener('click', () => close(btn.textContent));
+            });
+        });
+    }
+
+    // Shown next to the name field on the home screen's join/create forms. A
+    // paid account's uploaded avatar always wins in-game (see server's
+    // playerIcon()), so there's nothing to pick here — just show it read-only.
+    function renderIconPickerHtml(idPrefix) {
+        if (S.authToken && S.user && S.user.paid && S.user.avatarDataUrl) {
+            return `<div class="w-10 h-10 shrink-0 rounded-full overflow-hidden border-2 border-gray-200" title="Your profile photo will be used">
+                <img src="${S.user.avatarDataUrl}" class="w-full h-full object-cover">
+            </div>`;
+        }
+        return `<button type="button" id="${idPrefix}EmojiBtn" class="emojiPickerBtn w-10 h-10 shrink-0 text-xl rounded-full border-2 border-gray-200 hover:border-[#ffec06] flex items-center justify-center transition-transform" title="Pick your icon">${escapeHtml(S.emoji || '🧑‍🎨')}</button>`;
+    }
+
+    // Brief press animation + label swap on copy-to-clipboard buttons so the user
+    // knows the click registered and the clipboard actually got the text.
+    function flashCopied(btn) {
+        if (btn.dataset.copying) return;
+        btn.dataset.copying = '1';
+        const original = btn.innerHTML;
+        btn.classList.add('scale-90');
+        setTimeout(() => btn.classList.remove('scale-90'), 150);
+        btn.innerHTML = '✅ Copied!';
+        setTimeout(() => {
+            btn.innerHTML = original;
+            delete btn.dataset.copying;
+        }, 1400);
     }
 
     // The "someone beat you to the last spot" case shares this same UI, offering
@@ -324,7 +379,7 @@
         // Uses authApi (not api) so a logged-in player's userId gets attached
         // server-side, feeding the "games played together" friend stat — anonymous
         // players are unaffected since authApi only adds the header when S.authToken is set.
-        const data = await authApi(`/games/${code}/join`, { method: 'POST', body: JSON.stringify({ name }) });
+        const data = await authApi(`/games/${code}/join`, { method: 'POST', body: JSON.stringify({ name, emoji: S.emoji }) });
         S.code = code.toUpperCase();
         S.playerId = data.playerId;
         S.game = data;
@@ -688,6 +743,7 @@
                         <div class="flex flex-wrap gap-2">
                             <input id="joinCode" type="text" maxlength="6" placeholder="CODE" value="${urlCode}"
                                 class="w-24 px-3 py-2 border-2 border-gray-300 rounded-lg font-mono uppercase text-center focus:outline-none focus:border-[#ffec06]">
+                            ${renderIconPickerHtml('join')}
                             <input id="joinName" type="text" maxlength="30" placeholder="Your name" value="${S.authToken && S.user ? escapeHtml(S.user.username) : ''}"
                                 class="flex-1 min-w-0 px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-[#ffec06]">
                             <button id="joinBtn" class="w-full sm:w-auto px-4 py-2 bg-[#ffec06] hover:bg-[#e6d405] text-black font-semibold rounded-lg">Join</button>
@@ -702,8 +758,11 @@
 
                     <!-- CREATE -->
                     <div class="mb-4">
-                        <input id="createName" type="text" maxlength="30" placeholder="Your name" value="${S.authToken && S.user ? escapeHtml(S.user.username) : ''}"
-                            class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500 mb-3">
+                        <div class="flex gap-2 mb-3">
+                            ${renderIconPickerHtml('create')}
+                            <input id="createName" type="text" maxlength="30" placeholder="Your name" value="${S.authToken && S.user ? escapeHtml(S.user.username) : ''}"
+                                class="flex-1 min-w-0 px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500">
+                        </div>
 
                         <div class="mb-3">
                             <label class="block text-xs font-medium text-gray-500 mb-1">Number of artists: <b><span id="playerCountValue">?</span></b></label>
@@ -835,6 +894,19 @@
         document.getElementById('joinBtn').addEventListener('click', doJoin);
         document.getElementById('joinName').addEventListener('keypress', e => { if (e.key === 'Enter') doJoin(); });
 
+        // Both the join and create forms share one global icon pick — picking it
+        // from either button updates both, since it's really "your icon", not
+        // per-form. Absent entirely when a paid avatar is already shown instead.
+        document.querySelectorAll('.emojiPickerBtn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const picked = await showEmojiPicker();
+                if (!picked) return;
+                S.emoji = picked;
+                localStorage.setItem('ec_emoji', picked);
+                document.querySelectorAll('.emojiPickerBtn').forEach(b => { b.textContent = picked; });
+            });
+        });
+
         async function doJoin() {
             const code = document.getElementById('joinCode').value.trim().toUpperCase();
             const name = document.getElementById('joinName').value.trim();
@@ -920,8 +992,8 @@
                         <p class="text-sm text-gray-600 mb-1">Game Code</p>
                         <p class="text-4xl font-mono font-bold text-gray-900 tracking-widest mb-3">${g.code}</p>
                         <div class="flex gap-2 justify-center">
-                            <button id="copyCodeBtn" class="px-4 py-2 bg-[#ffec06] hover:bg-[#e6d405] text-black text-sm font-semibold rounded-lg">📋 Copy code</button>
-                            <button id="copyLinkBtn" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold rounded-lg">🔗 Copy invite link</button>
+                            <button id="copyCodeBtn" class="px-4 py-2 bg-[#ffec06] hover:bg-[#e6d405] text-black text-sm font-semibold rounded-lg transition-transform">📋 Copy code</button>
+                            <button id="copyLinkBtn" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold rounded-lg transition-transform">🔗 Copy invite link</button>
                         </div>
                     </div>
 
@@ -938,11 +1010,13 @@
             </div>
         </div>`;
 
-        document.getElementById('copyCodeBtn').addEventListener('click', () => {
+        document.getElementById('copyCodeBtn').addEventListener('click', e => {
             navigator.clipboard.writeText(g.code);
+            flashCopied(e.currentTarget);
         });
-        document.getElementById('copyLinkBtn').addEventListener('click', () => {
+        document.getElementById('copyLinkBtn').addEventListener('click', e => {
             navigator.clipboard.writeText(`${location.origin}/?code=${g.code}`);
+            flashCopied(e.currentTarget);
         });
         document.getElementById('cancelLobbyBtn').addEventListener('click', () => {
             stopPolling();
@@ -967,11 +1041,14 @@
         list.innerHTML = Array.from({ length: slotCount }, (_, i) => i).map(i => {
             const p = g.players[i];
             const isYou = p && g.you && p.order === g.you.order;
+            const icon = !p ? `<span class="text-2xl">💤</span>`
+                : p.avatarDataUrl ? `<img src="${p.avatarDataUrl}" class="w-8 h-8 rounded-full object-cover">`
+                : `<span class="text-2xl">${p.emoji || '🧑‍🎨'}</span>`;
             return `
             <div class="p-4 rounded-xl border-2 ${p ? 'bg-[#fffce8] border-[#ffec06]' : 'bg-gray-50 border-dashed border-gray-300'}">
                 <div class="flex items-center justify-between">
                     <div class="flex items-center gap-3">
-                        <span class="text-2xl">${p ? '🧑‍🎨' : '💤'}</span>
+                        ${icon}
                         <p class="font-semibold ${p ? '' : 'text-gray-400'}">${p ? p.name : 'Waiting for artist...'}</p>
                     </div>
                     ${isYou ? '<span class="text-xs font-bold text-black bg-[#ffec06] px-2 py-1 rounded-full">YOU</span>' : ''}
@@ -1637,8 +1714,8 @@
                             <p class="text-sm text-gray-600 mb-2 text-center">Still need ${g.maxPlayers - g.players.length} more artist${g.maxPlayers - g.players.length === 1 ? '' : 's'} — share the code to bring them in:</p>
                             <p class="text-2xl font-mono font-bold text-gray-900 tracking-widest mb-3 text-center">${g.code}</p>
                             <div class="flex gap-2 justify-center mb-1">
-                                <button id="passthroughCopyCodeBtn" class="px-4 py-2 bg-[#ffec06] hover:bg-[#e6d405] text-black text-sm font-semibold rounded-lg">📋 Copy code</button>
-                                <button id="passthroughCopyLinkBtn" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold rounded-lg">🔗 Copy invite link</button>
+                                <button id="passthroughCopyCodeBtn" class="px-4 py-2 bg-[#ffec06] hover:bg-[#e6d405] text-black text-sm font-semibold rounded-lg transition-transform">📋 Copy code</button>
+                                <button id="passthroughCopyLinkBtn" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold rounded-lg transition-transform">🔗 Copy invite link</button>
                             </div>
                             ${S.authToken && S.user ? `
                                 <button id="passthroughInviteFriendBtn" class="w-full px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold rounded-lg mt-2">👥 Invite a friend</button>
@@ -1661,7 +1738,7 @@
                                 ${S.chainSessionList.map((c, i) => `
                                     <div class="flex items-center justify-between gap-2 text-sm">
                                         <span class="text-gray-700 truncate">Drawing ${i + 1}: <span class="italic capitalize text-gray-900">${escapeHtml(c.inspiration || 'untitled')}</span></span>
-                                        <button class="chainCopyLinkBtn shrink-0 text-xs px-2 py-1 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded" data-code="${c.code}">🔗 Copy link</button>
+                                        <button class="chainCopyLinkBtn shrink-0 text-xs px-2 py-1 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded transition-transform" data-code="${c.code}">🔗 Copy link</button>
                                     </div>
                                 `).join('')}
                             </div>
@@ -1692,11 +1769,13 @@
         }
 
         if (g.mode === 'passthrough' && g.players.length < g.maxPlayers) {
-            document.getElementById('passthroughCopyCodeBtn').addEventListener('click', () => {
+            document.getElementById('passthroughCopyCodeBtn').addEventListener('click', e => {
                 navigator.clipboard.writeText(g.code);
+                flashCopied(e.currentTarget);
             });
-            document.getElementById('passthroughCopyLinkBtn').addEventListener('click', () => {
+            document.getElementById('passthroughCopyLinkBtn').addEventListener('click', e => {
                 navigator.clipboard.writeText(`${location.origin}/?code=${g.code}`);
+                flashCopied(e.currentTarget);
             });
             const inviteFriendBtn = document.getElementById('passthroughInviteFriendBtn');
             if (inviteFriendBtn) {
@@ -1781,11 +1860,9 @@
         }
 
         document.querySelectorAll('.chainCopyLinkBtn').forEach(btn => {
-            btn.addEventListener('click', () => {
+            btn.addEventListener('click', e => {
                 navigator.clipboard.writeText(`${location.origin}/?code=${btn.dataset.code}`);
-                const original = btn.textContent;
-                btn.textContent = 'Copied!';
-                setTimeout(() => { btn.textContent = original; }, 1500);
+                flashCopied(e.currentTarget);
             });
         });
     }
