@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Exquisite Corpse</title>
     <link rel="icon" type="image/svg+xml" href="/graphics/Exquisite-corpse-logo.svg">
     <script src="https://cdn.tailwindcss.com"></script>
@@ -27,12 +27,18 @@
             top: 0;
             left: 0;
         }
-        /* The edge-hint strip sits above the canvas but outside it — without this,
-           a finger touching it (reaching for the connecting line) falls through to
-           native scroll/pull-to-refresh instead of being treated as part of the paper. */
+        /* Only the paper itself (canvas + edge-hint strip) blocks native touch
+           gestures — #paperArea is the full flex area around it, including
+           margin the paper doesn't fill, and that margin should stay pinch-
+           zoomable so a user can zoom in/adjust without fighting the page. */
         #paperArea {
-            touch-action: none;
             overscroll-behavior: contain;
+        }
+        /* Without this, a finger touching the edge-hint strip (reaching for the
+           connecting line) falls through to native scroll/pull-to-refresh
+           instead of being treated as part of the paper. */
+        #paperWrap {
+            touch-action: none;
         }
         /* Plain <img> elements get iOS's native long-press "Save Image" callout
            regardless of touch-action — that's a separate gesture recognizer.
@@ -43,23 +49,6 @@
             user-select: none;
             pointer-events: none;
         }
-        #offsetCrosshair {
-            position: absolute;
-            width: 20px;
-            height: 20px;
-            margin-left: -10px;
-            margin-top: -10px;
-            pointer-events: none;
-            z-index: 3;
-            display: none;
-        }
-        #offsetCrosshair::before, #offsetCrosshair::after {
-            content: '';
-            position: absolute;
-            background: rgba(220, 38, 38, 0.85);
-        }
-        #offsetCrosshair::before { left: 50%; top: 0; bottom: 0; width: 2px; transform: translateX(-50%); }
-        #offsetCrosshair::after { top: 50%; left: 0; right: 0; height: 2px; transform: translateY(-50%); }
         .fade-in { animation: fadeIn 0.8s ease-in forwards; opacity: 0; }
         @keyframes fadeIn { to { opacity: 1; } }
         .layerBtn.active { background: #1f2937; color: white; }
@@ -113,9 +102,6 @@
         pencilSize: 6,
         brushSize: 12,
         activeLayer: 1,        // 1 = line art (top, default), 0 = background/fill (bottom)
-        // finger-drawing aid: draws at a point offset from the actual touch, with a
-        // crosshair marker, so the fingertip doesn't block the view of the line
-        cursorOffset: localStorage.getItem('ec_cursorOffset') === 'true',
         undoStacks: [[], []],  // per-layer dataURL snapshots (compressed, memory-friendly)
         submittedThisRound: false,
         lastRound: null,
@@ -274,8 +260,8 @@
         }
     }
 
-    async function createGame(mode, timePerTurn, maxPlayers) {
-        const { code } = await api('/games', { method: 'POST', body: JSON.stringify({ mode, timePerTurn, maxPlayers }) });
+    async function createGame(mode, timePerTurn, maxPlayers, openHeadcount) {
+        const { code } = await api('/games', { method: 'POST', body: JSON.stringify({ mode, timePerTurn, maxPlayers, openHeadcount }) });
         S.code = code;
         sessionStorage.setItem('ec_code', code);
         return code;
@@ -529,7 +515,7 @@
         }
         const enabled = S.notifyEnabled && Notification.permission === 'granted';
         return `
-        <button id="notifyToggleBtn" class="w-full mt-3 px-3 py-2 text-sm font-medium rounded-lg border ${enabled ? 'bg-green-50 text-green-700 border-green-200' : 'bg-gray-50 hover:bg-gray-100 text-gray-500 border-gray-200'}">
+        <button id="notifyToggleBtn" class="w-full mt-3 px-3 py-2 text-sm font-medium rounded-lg border ${enabled ? 'bg-[#fffce8] text-black border-[#ffec06]' : 'bg-gray-50 hover:bg-gray-100 text-gray-500 border-gray-200'}">
             ${enabled ? "🔔 Notifying you when it's your turn" : '🔔 Notify me when it\'s my turn'}
         </button>`;
     }
@@ -680,7 +666,7 @@
 
                         <div class="mb-3">
                             <label class="block text-xs font-medium text-gray-500 mb-1">Number of artists: <b><span id="playerCountValue">3</span></b></label>
-                            <input id="playerCountSlider" type="range" min="2" max="20" value="3" class="w-full">
+                            <input id="playerCountSlider" type="range" min="1" max="20" value="3" class="w-full">
                             <p id="playerCountHint" class="text-xs text-gray-500 mt-1.5">Everyone draws every round — more artists means more creations, not a longer game.</p>
                         </div>
 
@@ -757,9 +743,14 @@
         }
 
         const modeLabels = { async: 'modeAsyncLabel', timed: 'modeTimedLabel', passthrough: 'modePassthroughLabel' };
+        // Slider value '1' is the "?" open-headcount step, below the real
+        // minimum of 2 — only meaningful for non-passthrough modes.
+        function playerCountLabel(n) { return n === '1' ? '?' : n; }
         function updatePlayerCountHint(mode, n) {
             const hint = document.getElementById('playerCountHint');
-            if (mode === 'passthrough') {
+            if (n === '1') {
+                hint.textContent = "Anyone with the link can join — you'll decide when to start, and the roster locks in at whatever headcount you've got then.";
+            } else if (mode === 'passthrough') {
                 hint.textContent = n === '2'
                     ? 'Each of you draws a head on your own sheet, then you swap for the torso, then swap back for the legs — no need to be online at the same time.'
                     : 'Each of you draws a head on your own sheet, then sheets rotate for the torso and legs — no need to be online at the same time.';
@@ -780,16 +771,16 @@
                 if (mode === 'passthrough') {
                     slider.min = 2; slider.max = 3; slider.value = 2;
                 } else {
-                    slider.min = 2; slider.max = 20; slider.value = 3;
+                    slider.min = 1; slider.max = 20; slider.value = 3;
                 }
-                document.getElementById('playerCountValue').textContent = slider.value;
+                document.getElementById('playerCountValue').textContent = playerCountLabel(slider.value);
                 updatePlayerCountHint(mode, slider.value);
             });
         });
         document.getElementById('playerCountSlider').addEventListener('input', e => {
             const n = e.target.value;
             const mode = document.querySelector('input[name="mode"]:checked').value;
-            document.getElementById('playerCountValue').textContent = n;
+            document.getElementById('playerCountValue').textContent = playerCountLabel(n);
             updatePlayerCountHint(mode, n);
         });
         document.getElementById('timerSlider').addEventListener('input', e => {
@@ -801,9 +792,11 @@
             if (!name) return showHomeError('Enter your name to create a game.');
             const mode = document.querySelector('input[name="mode"]:checked').value;
             const timePerTurn = parseInt(document.getElementById('timerSlider').value);
-            const maxPlayers = Number(document.getElementById('playerCountSlider').value);
+            const sliderVal = document.getElementById('playerCountSlider').value;
+            const openHeadcount = mode !== 'passthrough' && sliderVal === '1';
+            const maxPlayers = openHeadcount ? undefined : Number(sliderVal);
             try {
-                const code = await createGame(mode, timePerTurn, maxPlayers);
+                const code = await createGame(mode, timePerTurn, maxPlayers, openHeadcount);
                 await joinGame(code, name);
                 routeToGameScreen(S.game);
                 render();
@@ -901,14 +894,16 @@
             <div class="w-full max-w-xl">
                 <div class="bg-white rounded-2xl shadow-lg p-8">
                     <h1 class="text-3xl font-bold mb-1">Waiting Room</h1>
-                    <p class="text-gray-500 mb-6">The game begins when ${g.maxPlayers} artist${g.maxPlayers > 1 ? 's have' : ' has'} joined.</p>
+                    <p class="text-gray-500 mb-6">${g.openHeadcount
+                        ? 'Anyone with the link can join — start whenever you\'re ready.'
+                        : `The game begins when ${g.maxPlayers} artist${g.maxPlayers > 1 ? 's have' : ' has'} joined.`}</p>
 
-                    <div class="mb-6 p-5 bg-blue-50 rounded-xl border-2 border-blue-200 text-center">
+                    <div class="mb-6 p-5 bg-[#fffce8] rounded-xl border-2 border-[#ffec06] text-center">
                         <p class="text-sm text-gray-600 mb-1">Game Code</p>
-                        <p class="text-4xl font-mono font-bold text-blue-600 tracking-widest mb-3">${g.code}</p>
+                        <p class="text-4xl font-mono font-bold text-gray-900 tracking-widest mb-3">${g.code}</p>
                         <div class="flex gap-2 justify-center">
-                            <button id="copyCodeBtn" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg">📋 Copy code</button>
-                            <button id="copyLinkBtn" class="px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 text-sm font-semibold rounded-lg">🔗 Copy invite link</button>
+                            <button id="copyCodeBtn" class="px-4 py-2 bg-[#ffec06] hover:bg-[#e6d405] text-black text-sm font-semibold rounded-lg">📋 Copy code</button>
+                            <button id="copyLinkBtn" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold rounded-lg">🔗 Copy invite link</button>
                         </div>
                     </div>
 
@@ -948,31 +943,38 @@
         const actions = document.getElementById('lobbyActions');
         if (!list || !actions) return;
 
-        list.innerHTML = Array.from({ length: g.maxPlayers }, (_, i) => i).map(i => {
+        // Open headcount: show only artists who've actually joined (no ghost
+        // "waiting for artist" placeholders, since there's no fixed target).
+        const slotCount = g.openHeadcount ? g.players.length : g.maxPlayers;
+        list.innerHTML = Array.from({ length: slotCount }, (_, i) => i).map(i => {
             const p = g.players[i];
             const isYou = p && g.you && p.order === g.you.order;
             return `
-            <div class="p-4 rounded-xl border-2 ${p ? 'bg-green-50 border-green-300' : 'bg-gray-50 border-dashed border-gray-300'}">
+            <div class="p-4 rounded-xl border-2 ${p ? 'bg-[#fffce8] border-[#ffec06]' : 'bg-gray-50 border-dashed border-gray-300'}">
                 <div class="flex items-center justify-between">
                     <div class="flex items-center gap-3">
                         <span class="text-2xl">${p ? '🧑‍🎨' : '💤'}</span>
                         <p class="font-semibold ${p ? '' : 'text-gray-400'}">${p ? p.name : 'Waiting for artist...'}</p>
                     </div>
-                    ${isYou ? '<span class="text-xs font-bold text-blue-600 bg-blue-100 px-2 py-1 rounded-full">YOU</span>' : ''}
+                    ${isYou ? '<span class="text-xs font-bold text-black bg-[#ffec06] px-2 py-1 rounded-full">YOU</span>' : ''}
                 </div>
             </div>`;
-        }).join('');
+        }).join('') + (g.openHeadcount ? `<p class="text-xs text-gray-400 text-center">${g.players.length} artist${g.players.length === 1 ? '' : 's'} joined so far</p>` : '');
 
         const isCreator = g.you && g.you.order === 1;
-        const isFull = g.players.length === g.maxPlayers;
+        const isFull = g.openHeadcount ? g.players.length >= 2 : g.players.length === g.maxPlayers;
         if (isFull && isCreator) {
-            actions.innerHTML = `<button id="startBtn" class="w-full px-6 py-4 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl text-lg">🚀 Start Game</button>`;
+            actions.innerHTML = `<button id="startBtn" class="w-full px-6 py-4 bg-[#ffec06] hover:bg-[#e6d405] text-black font-bold rounded-xl text-lg">🚀 Start Game</button>`;
             document.getElementById('startBtn').addEventListener('click', async () => {
                 try {
                     await api(`/games/${S.code}/start`, { method: 'POST', body: JSON.stringify({ playerId: S.playerId }) });
                     pollState();
                 } catch (e) { alert(e.message); }
             });
+        } else if (g.openHeadcount) {
+            actions.innerHTML = isCreator
+                ? `<p class="text-center text-gray-500">Share the code — start whenever you're ready (at least 2 needed).</p>`
+                : `<p class="text-center text-gray-500">Waiting for <b>${g.players[0].name}</b> to start the game...</p>`;
         } else if (isFull) {
             actions.innerHTML = `<p class="text-center text-gray-500">Everyone's here! Waiting for <b>${g.players[0].name}</b> to start...</p>`;
         } else {
@@ -1015,7 +1017,7 @@
                 </div>
                 <div class="flex items-center gap-4">
                     <span id="timerBadge" class="text-lg font-mono font-bold text-gray-700"></span>
-                    <button id="submitBtn" class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg">✓ Done</button>
+                    <button id="submitBtn" class="px-5 py-2 bg-[#ffec06] hover:bg-[#e6d405] text-black font-bold rounded-lg">✓ Done</button>
                 </div>
             </div>
 
@@ -1076,8 +1078,6 @@
                 <div class="h-6 border-l border-gray-300"></div>
                 <button id="undoBtn" class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold rounded-lg">↶ Undo</button>
                 <button id="clearBtn" class="px-3 py-1.5 bg-orange-100 hover:bg-orange-200 text-orange-700 text-sm font-semibold rounded-lg">Clear</button>
-                <div class="h-6 border-l border-gray-300"></div>
-                <button id="offsetToggleBtn" class="px-2.5 py-1.5 rounded-lg border text-sm font-semibold ${S.cursorOffset ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-300'}" title="Draw with a small offset crosshair so your finger doesn't block the line">🎯 Finger offset</button>
                 <div id="roundStatus" class="ml-auto flex gap-2"></div>
             </div>
 
@@ -1091,7 +1091,6 @@
                     <div id="canvasStack" class="relative bg-white border-2 ${g.edgeHint ? 'border-amber-400 border-t-amber-200' : 'border-gray-300'}">
                         <canvas id="layerCanvas0" width="${CANVAS_W}" height="${CANVAS_H}" class="layerCanvas block" style="z-index:1"></canvas>
                         <canvas id="layerCanvas1" width="${CANVAS_W}" height="${CANVAS_H}" class="layerCanvas block" style="z-index:2; cursor:crosshair"></canvas>
-                        <div id="offsetCrosshair"></div>
                     </div>
                 </div>
             </div>
@@ -1164,34 +1163,16 @@
         let penSeen = false;        // once a stylus is used, ignore finger touches (palm rejection)
         let last = null;            // previous point for segment drawing
 
-        // "Finger offset" aid: shifts the effective drawing point away from a touch
-        // (not mouse/pen — those already have a visible tip), so the fingertip
-        // doesn't sit directly on top of the line being drawn.
-        const OFFSET_PX = 10;
-        const crosshair = document.getElementById('offsetCrosshair');
-
         function pos(e) {
             const rect = topCanvas.getBoundingClientRect();
-            const clientX = (S.cursorOffset && e.pointerType === 'touch') ? e.clientX - OFFSET_PX : e.clientX;
             return {
-                x: (clientX - rect.left) * (CANVAS_W / rect.width),
+                x: (e.clientX - rect.left) * (CANVAS_W / rect.width),
                 y: (e.clientY - rect.top) * (CANVAS_H / rect.height),
             };
         }
 
-        function updateCrosshair(e) {
-            if (!crosshair) return;
-            if (!S.cursorOffset || e.pointerType !== 'touch') {
-                crosshair.style.display = 'none';
-                return;
-            }
-            const rect = topCanvas.getBoundingClientRect();
-            crosshair.style.display = 'block';
-            crosshair.style.left = (e.clientX - rect.left - OFFSET_PX) + 'px';
-            crosshair.style.top = (e.clientY - rect.top) + 'px';
-        }
-
         // Pressure-aware width: Apple Pencil / stylus varies 0..1, mouse & touch report 0.5
+        let lastBrushPressure = 0.5; // carries forward across a stroke's noisy samples; reseeded on each pointerdown
         function widthFor(e) {
             // Multiply by RENDER_SCALE so a given brush size looks the same
             // physical thickness on the page regardless of underlying resolution
@@ -1201,7 +1182,12 @@
                 // Brush is stylus-only, so pressure is always meaningful here —
                 // a much wider swing than pen's subtle variation, closer to a
                 // real ink brush going from a hair-thin touch to a full stroke.
-                const pressure = e.pressure > 0 ? e.pressure : 0.5;
+                // Some stylus/browser combos report a spurious 0 pressure for an
+                // occasional coalesced sample mid-stroke — falling back to a
+                // fixed value there snaps the width to a generic blob and
+                // breaks the taper, so we carry forward the last real reading.
+                const pressure = e.pressure > 0 ? e.pressure : lastBrushPressure;
+                lastBrushPressure = pressure;
                 return Math.max(0.4, base * (0.08 + pressure * 2.2));
             }
             if (e.pointerType === 'pen' && e.pressure > 0) {
@@ -1321,7 +1307,6 @@
             // Brush is stylus-only — a mouse/finger has no pressure to taper with
             if (S.tool === 'brush' && e.pointerType !== 'pen') return;
 
-            updateCrosshair(e);
             const p = pos(e);
 
             if (S.tool === 'fill') {
@@ -1337,6 +1322,7 @@
 
             if (S.tool === 'brush') {
                 brushStroke = [];
+                lastBrushPressure = e.pressure > 0 ? e.pressure : 0.5;
                 const w = widthFor(e) * brushTaperInFactor(0);
                 brushStroke.push({ x: p.x, y: p.y, width: w });
                 drawSegment(p, { x: p.x + 0.01, y: p.y + 0.01 }, w);
@@ -1349,7 +1335,6 @@
             if (e.pointerId !== activePointer) return;
             e.preventDefault();
 
-            updateCrosshair(e);
             // Coalesced events: Apple Pencil samples at 240Hz — much smoother curves
             const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
             for (const ev of events) {
@@ -1371,18 +1356,10 @@
                 activePointer = null;
                 last = null;
             }
-            if (crosshair) crosshair.style.display = 'none';
         };
         topCanvas.addEventListener('pointerup', stop);
         topCanvas.addEventListener('pointercancel', stop);
         topCanvas.addEventListener('contextmenu', e => e.preventDefault()); // no long-press menu on tablets
-
-        document.getElementById('offsetToggleBtn').addEventListener('click', (e) => {
-            S.cursorOffset = !S.cursorOffset;
-            localStorage.setItem('ec_cursorOffset', String(S.cursorOffset));
-            e.target.className = `px-2.5 py-1.5 rounded-lg border text-sm font-semibold ${S.cursorOffset ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-300'}`;
-            if (!S.cursorOffset && crosshair) crosshair.style.display = 'none';
-        });
 
         // Tool picker: a single trigger button that expands into a dropdown of
         // the other tools, rather than three always-visible buttons — keeps the
@@ -1638,15 +1615,15 @@
                     <h2 class="text-2xl font-bold mb-2">Nice ${SECTION_LABELS[g.section] ? SECTION_LABELS[g.section].toLowerCase() : 'work'}!</h2>
                     <p class="text-gray-600 mb-6">Waiting for the other artists to finish round ${g.round}...</p>
                     ${g.mode === 'passthrough' && g.players.length < g.maxPlayers ? `
-                        <div class="mb-6 p-4 bg-blue-50 rounded-xl border-2 border-blue-200 text-left">
+                        <div class="mb-6 p-4 bg-[#fffce8] rounded-xl border-2 border-[#ffec06] text-left">
                             <p class="text-sm text-gray-600 mb-2 text-center">Still need ${g.maxPlayers - g.players.length} more artist${g.maxPlayers - g.players.length === 1 ? '' : 's'} — share the code to bring them in:</p>
-                            <p class="text-2xl font-mono font-bold text-blue-600 tracking-widest mb-3 text-center">${g.code}</p>
+                            <p class="text-2xl font-mono font-bold text-gray-900 tracking-widest mb-3 text-center">${g.code}</p>
                             <div class="flex gap-2 justify-center mb-1">
-                                <button id="passthroughCopyCodeBtn" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg">📋 Copy code</button>
-                                <button id="passthroughCopyLinkBtn" class="px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 text-sm font-semibold rounded-lg">🔗 Copy invite link</button>
+                                <button id="passthroughCopyCodeBtn" class="px-4 py-2 bg-[#ffec06] hover:bg-[#e6d405] text-black text-sm font-semibold rounded-lg">📋 Copy code</button>
+                                <button id="passthroughCopyLinkBtn" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold rounded-lg">🔗 Copy invite link</button>
                             </div>
                             ${S.authToken && S.user ? `
-                                <button id="passthroughInviteFriendBtn" class="w-full px-4 py-2 bg-purple-100 hover:bg-purple-200 text-purple-700 text-sm font-semibold rounded-lg mt-2">👥 Invite a friend</button>
+                                <button id="passthroughInviteFriendBtn" class="w-full px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold rounded-lg mt-2">👥 Invite a friend</button>
                                 <div id="passthroughFriendList" class="hidden mt-2 space-y-1"></div>
                             ` : ''}
                         </div>
@@ -1655,7 +1632,7 @@
                         </button>
                     ` : ''}
                     ${g.mode === 'passthrough' && S.authToken && S.user ? `
-                        <button id="passAnotherSheetBtn" class="w-full mt-3 px-4 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 text-sm font-semibold rounded-lg border border-purple-200">
+                        <button id="passAnotherSheetBtn" class="w-full mt-3 px-4 py-2 bg-[#fffce8] hover:bg-[#fff9d1] text-black text-sm font-semibold rounded-lg border border-[#ffec06]">
                             🎨 Pass another sheet — start a new chain
                         </button>
                     ` : ''}
@@ -1665,8 +1642,8 @@
                             <div class="space-y-1.5">
                                 ${S.chainSessionList.map((c, i) => `
                                     <div class="flex items-center justify-between gap-2 text-sm">
-                                        <span class="text-gray-700 truncate">Drawing ${i + 1}: <span class="italic capitalize text-purple-600">${escapeHtml(c.inspiration || 'untitled')}</span></span>
-                                        <button class="chainCopyLinkBtn shrink-0 text-xs px-2 py-1 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded" data-code="${c.code}">🔗 Copy link</button>
+                                        <span class="text-gray-700 truncate">Drawing ${i + 1}: <span class="italic capitalize text-gray-900">${escapeHtml(c.inspiration || 'untitled')}</span></span>
+                                        <button class="chainCopyLinkBtn shrink-0 text-xs px-2 py-1 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded" data-code="${c.code}">🔗 Copy link</button>
                                     </div>
                                 `).join('')}
                             </div>
@@ -1796,12 +1773,12 @@
         // Compact chips in the draw-screen toolbar; stacked rows on the waiting screen
         if (S.screen === 'draw' && !S.submittedThisRound) {
             el.innerHTML = g.players.map(p => `
-                <span class="text-xs px-2 py-1 rounded-full ${p.submitted ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}"
+                <span class="text-xs px-2 py-1 rounded-full ${p.submitted ? 'bg-[#ffec06] text-black' : 'bg-gray-100 text-gray-500'}"
                     title="${p.name}">${p.name.slice(0, 8)}${p.submitted ? ' ✓' : ' ✏️'}</span>
             `).join('');
         } else {
             el.innerHTML = g.players.map(p => `
-                <div class="flex items-center justify-between px-4 py-2 rounded-lg ${p.submitted ? 'bg-green-50' : 'bg-gray-50'}">
+                <div class="flex items-center justify-between px-4 py-2 rounded-lg ${p.submitted ? 'bg-[#fffce8]' : 'bg-gray-50'}">
                     <span class="text-sm font-medium">${p.name}${g.you && p.order === g.you.order ? ' (you)' : ''}</span>
                     <span class="text-sm">${p.submitted ? '✅ done' : '✏️ drawing...'}</span>
                 </div>
@@ -2604,10 +2581,13 @@
                                         ? ` · with ${og.otherArtists.map(n => escapeHtml(n)).join(', ')}`
                                         : (og.waitingForPlayers ? ' · waiting for an artist' : '');
                                     return `
-                                    <button data-idx="${i}" class="openGameBtn w-full flex items-center justify-between gap-2 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg px-3 py-2 text-left transition">
-                                        <span class="text-sm text-amber-800 truncate">${og.continuingFrom ? `Continue ${escapeHtml(og.continuingFrom)}'s creation` : 'Your creation'} — ${SECTION_LABELS[og.section] || ''}${joinedText}</span>
-                                        <span class="text-amber-600 text-xs font-semibold shrink-0">${og.needsSubmission ? 'Continue →' : 'Waiting...'}</span>
-                                    </button>
+                                    <div class="flex items-center gap-1.5">
+                                        <button data-idx="${i}" class="openGameBtn flex-1 min-w-0 flex items-center justify-between gap-2 bg-[#fffce8] hover:bg-[#fff9d1] border border-[#ffec06] rounded-lg px-3 py-2 text-left transition">
+                                            <span class="text-sm text-gray-900 truncate">${og.continuingFrom ? `Continue ${escapeHtml(og.continuingFrom)}'s creation` : 'Your creation'} — ${SECTION_LABELS[og.section] || ''}${joinedText}</span>
+                                            <span class="text-gray-600 text-xs font-semibold shrink-0">${og.needsSubmission ? 'Continue →' : 'Waiting...'}</span>
+                                        </button>
+                                        <button data-idx="${i}" class="cancelOpenGameBtn shrink-0 w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg" title="Cancel this chain">✕</button>
+                                    </div>
                                 `;
                                 }).join('')}
                             </div>
@@ -2848,6 +2828,23 @@
 
         document.querySelectorAll('.openGameBtn').forEach(btn => {
             btn.addEventListener('click', () => enterMyGame(S.myOpenGames[Number(btn.dataset.idx)]));
+        });
+
+        // Lets a premium account managing several chains prune ones nobody's
+        // responded to, without having to open each one just to cancel it.
+        document.querySelectorAll('.cancelOpenGameBtn').forEach(btn => {
+            btn.addEventListener('click', async e => {
+                e.stopPropagation();
+                const entry = S.myOpenGames[Number(btn.dataset.idx)];
+                if (!confirm('Cancel this chain? The invite link will stop working.')) return;
+                try {
+                    await api(`/games/${entry.code}/cancel`, { method: 'POST', body: JSON.stringify({ playerId: entry.playerId }) });
+                    S.myOpenGames = null;
+                    renderAccount();
+                } catch (e) {
+                    alert('Could not cancel: ' + e.message);
+                }
+            });
         });
 
         document.querySelectorAll('.acceptInviteBtn').forEach(btn => {

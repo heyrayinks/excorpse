@@ -107,6 +107,11 @@ function publicState(game, playerId) {
     status: game.status, // waiting | active | completed
     mode: game.mode,
     maxPlayers: game.maxPlayers,
+    // Still 'waiting' with an open headcount: maxPlayers is a soft ceiling
+    // (not the real target) until the creator hits Start, which locks it to
+    // however many actually joined. Lets the client skip drawing "N-of-max"
+    // placeholder slots while the roster is still genuinely unknown.
+    openHeadcount: game.status === 'waiting' && !!game.openHeadcount,
     timePerTurn: game.timePerTurn,
     round,
     section, // what everyone is drawing this round
@@ -651,18 +656,27 @@ function handleApi(req, res, url) {
       if (err) return json(res, 400, { error: err.message });
       const mode = body.mode === 'timed' ? 'timed' : body.mode === 'passthrough' ? 'passthrough' : 'async';
       const timePerTurn = mode === 'timed' ? Math.min(10, Math.max(1, Number(body.timePerTurn) || 3)) : null;
+      // Open headcount: the creator doesn't commit to an exact roster up front —
+      // anyone with the link can join (up to the same 20-player ceiling as a
+      // fixed game) until the creator hits Start, which locks maxPlayers to
+      // however many actually showed up. Doesn't apply to 'passthrough' — that
+      // mode's 2-3 person rotation is fixed by design.
+      const openHeadcount = mode !== 'passthrough' && !!body.openHeadcount;
       // 'passthrough' is the same N-sheet rotation as the other modes, just without
       // requiring everyone online together — capped at 2-3 (default 2) since there
       // are only 3 fixed sections (head/torso/legs) to rotate through.
       const maxPlayers = mode === 'passthrough'
         ? Math.min(3, Math.max(2, Number(body.maxPlayers) || 2))
-        : Math.min(20, Math.max(2, Number(body.maxPlayers) || 3)); // 2-20 players (classroom-sized groups)
+        : openHeadcount
+          ? 20
+          : Math.min(20, Math.max(2, Number(body.maxPlayers) || 3)); // 2-20 players (classroom-sized groups)
       const code = generateCode();
       const now = Date.now();
       games.set(code, {
         code,
         status: 'waiting',
         mode,
+        openHeadcount,
         timePerTurn,
         maxPlayers,
         players: [],
@@ -735,8 +749,18 @@ function handleApi(req, res, url) {
       if (err) return json(res, 400, { error: err.message });
       const player = game.players.find(p => p.id === body.playerId);
       if (!player || player.order !== 1) return json(res, 403, { error: 'Only the game creator can start' });
-      if (game.players.length < game.maxPlayers) return json(res, 409, { error: `Need ${game.maxPlayers} players to start` });
       if (game.status !== 'waiting') return json(res, 409, { error: 'Game already started' });
+      if (game.openHeadcount) {
+        // Locking the roster here, not at creation, is the whole point of this
+        // mode — whatever showed up by the time the creator hits Start becomes
+        // the real player count the rotation math runs on.
+        if (game.players.length < 2) return json(res, 409, { error: 'Need at least 2 players to start' });
+        game.maxPlayers = game.players.length;
+        game.sheets = Array.from({ length: game.maxPlayers }, () => ({}));
+        game.openHeadcount = false;
+      } else if (game.players.length < game.maxPlayers) {
+        return json(res, 409, { error: `Need ${game.maxPlayers} players to start` });
+      }
       game.status = 'active';
       game.round = 1;
       game.roundStartedAt = Date.now();
