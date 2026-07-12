@@ -178,6 +178,47 @@
         }[c]));
     }
 
+    // Shared replacement for the browser's native confirm() dialog — appended
+    // directly to <body> (not #app) so it survives whichever screen's
+    // app.innerHTML render triggered it. Resolves true/false like confirm() did.
+    function showConfirmModal({ title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', icon = '⚠️', confirmClass = 'bg-red-600 hover:bg-red-700' }) {
+        return new Promise(resolve => {
+            const overlay = document.createElement('div');
+            overlay.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4';
+            overlay.innerHTML = `
+                <div class="bg-white rounded-2xl p-8 max-w-sm w-full text-center shadow-2xl">
+                    <div class="text-5xl mb-3">${icon}</div>
+                    <p class="text-gray-700 font-semibold mb-1">${title}</p>
+                    <p class="text-gray-500 text-sm mb-6">${message}</p>
+                    <div class="flex gap-3">
+                        <button class="confirmModalCancelBtn flex-1 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl">${cancelLabel}</button>
+                        <button class="confirmModalOkBtn flex-1 px-4 py-2.5 ${confirmClass} text-white font-bold rounded-xl">${confirmLabel}</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+            const close = result => { overlay.remove(); resolve(result); };
+            overlay.addEventListener('click', e => { if (e.target === overlay) close(false); });
+            overlay.querySelector('.confirmModalCancelBtn').addEventListener('click', () => close(false));
+            overlay.querySelector('.confirmModalOkBtn').addEventListener('click', () => close(true));
+        });
+    }
+
+    // The "someone beat you to the last spot" case shares this same UI, offering
+    // "Start your own game" instead of a destructive confirm action.
+    function showJoinFailedModal() {
+        return showConfirmModal({
+            title: 'Sorry, this drawing spot was taken.',
+            message: 'The game is full or already underway — someone else beat you to it.',
+            confirmLabel: 'Start your own game',
+            cancelLabel: 'Cancel',
+            icon: '😅',
+            confirmClass: 'bg-purple-600 hover:bg-purple-700',
+        });
+    }
+    function isJoinFullOrStarted(e) {
+        return e.message === 'Game is full' || e.message === 'Game already started';
+    }
+
     // Letter-paper proportions (8.5 x 11). Free tier DRAWS at 100 DPI (850x1100)
     // — same live experience as always, no perf/UX change. Paid accounts draw
     // natively at 300 DPI (2550x3300). Resolution is fixed at draw-time per
@@ -665,9 +706,9 @@
                             class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500 mb-3">
 
                         <div class="mb-3">
-                            <label class="block text-xs font-medium text-gray-500 mb-1">Number of artists: <b><span id="playerCountValue">3</span></b></label>
-                            <input id="playerCountSlider" type="range" min="1" max="20" value="3" class="w-full">
-                            <p id="playerCountHint" class="text-xs text-gray-500 mt-1.5">Everyone draws every round — more artists means more creations, not a longer game.</p>
+                            <label class="block text-xs font-medium text-gray-500 mb-1">Number of artists: <b><span id="playerCountValue">?</span></b></label>
+                            <input id="playerCountSlider" type="range" min="1" max="20" value="1" class="w-full">
+                            <p id="playerCountHint" class="text-xs text-gray-500 mt-1.5">Anyone with the link can join — you'll decide when to start, and the roster locks in at whatever headcount you've got then.</p>
                         </div>
 
                         <div class="space-y-2 mb-3">
@@ -700,19 +741,6 @@
                         <button id="createBtn" class="w-full px-6 py-3 bg-[#ffec06] hover:bg-[#e6d405] text-black font-bold rounded-xl text-lg transition">
                             🎮 Create Game
                         </button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Shown when a shared invite link's last spot got taken by someone else first -->
-            <div id="gameFullModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-                <div class="bg-white rounded-2xl p-8 max-w-sm w-full text-center shadow-2xl">
-                    <div class="text-5xl mb-3">😅</div>
-                    <p class="text-gray-700 font-semibold mb-1">Sorry, this drawing has already been taken.</p>
-                    <p class="text-gray-500 text-sm mb-6">Someone else beat you to the last spot.</p>
-                    <div class="flex gap-3">
-                        <button id="gameFullCloseBtn" class="flex-1 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl">Cancel</button>
-                        <button id="gameFullStartBtn" class="flex-1 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl">Start your own game</button>
                     </div>
                 </div>
             </div>
@@ -771,7 +799,7 @@
                 if (mode === 'passthrough') {
                     slider.min = 2; slider.max = 3; slider.value = 2;
                 } else {
-                    slider.min = 1; slider.max = 20; slider.value = 3;
+                    slider.min = 1; slider.max = 20; slider.value = 1;
                 }
                 document.getElementById('playerCountValue').textContent = playerCountLabel(slider.value);
                 updatePlayerCountHint(mode, slider.value);
@@ -822,29 +850,19 @@
                 // loses the race to the last spot gets a clear next step instead of
                 // a dead-end error, especially since passthrough invites are meant
                 // to be shared widely on a premium account.
-                if (e.message === 'Game is full') {
-                    document.getElementById('gameFullModal').classList.remove('hidden');
+                if (isJoinFullOrStarted(e)) {
+                    const startOwnGame = await showJoinFailedModal();
+                    if (startOwnGame) {
+                        const createName = document.getElementById('createName');
+                        if (name) createName.value = name;
+                        createName.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        createName.focus();
+                    }
                 } else {
                     showHomeError(e.message);
                 }
             }
         }
-
-        const gameFullModal = document.getElementById('gameFullModal');
-        document.getElementById('gameFullCloseBtn').addEventListener('click', () => {
-            gameFullModal.classList.add('hidden');
-        });
-        gameFullModal.addEventListener('click', e => {
-            if (e.target === gameFullModal) gameFullModal.classList.add('hidden');
-        });
-        document.getElementById('gameFullStartBtn').addEventListener('click', () => {
-            gameFullModal.classList.add('hidden');
-            const createName = document.getElementById('createName');
-            const joinName = document.getElementById('joinName').value.trim();
-            if (joinName) createName.value = joinName;
-            createName.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            createName.focus();
-        });
 
         function showHomeError(msg) { S.error = msg; renderHome(); }
     }
@@ -1722,7 +1740,13 @@
             // The invited artist may never show up — without this, the waiting
             // player is stuck polling forever with no way out.
             document.getElementById('cancelPassthroughBtn').addEventListener('click', async () => {
-                if (!confirm('Cancel this game? The invite link will stop working.')) return;
+                const ok = await showConfirmModal({
+                    title: 'Cancel this game?',
+                    message: 'The invite link will stop working.',
+                    confirmLabel: 'Cancel game',
+                    cancelLabel: 'Keep playing',
+                });
+                if (!ok) return;
                 try {
                     await api(`/games/${g.code}/cancel`, { method: 'POST', body: JSON.stringify({ playerId: S.playerId }) });
                 } catch (e) { /* game is being abandoned regardless of server outcome */ }
@@ -2836,7 +2860,13 @@
             btn.addEventListener('click', async e => {
                 e.stopPropagation();
                 const entry = S.myOpenGames[Number(btn.dataset.idx)];
-                if (!confirm('Cancel this chain? The invite link will stop working.')) return;
+                const ok = await showConfirmModal({
+                    title: 'Cancel this chain?',
+                    message: 'The invite link will stop working.',
+                    confirmLabel: 'Cancel chain',
+                    cancelLabel: 'Keep it',
+                });
+                if (!ok) return;
                 try {
                     await api(`/games/${entry.code}/cancel`, { method: 'POST', body: JSON.stringify({ playerId: entry.playerId }) });
                     S.myOpenGames = null;
@@ -2860,7 +2890,11 @@
                     render();
                     startPolling();
                 } catch (e) {
-                    alert('Could not join game: ' + e.message);
+                    if (isJoinFullOrStarted(e)) {
+                        await showJoinFailedModal();
+                    } else {
+                        alert('Could not join game: ' + e.message);
+                    }
                     S.friendsData = null;
                     renderAccount();
                 }
