@@ -2904,21 +2904,30 @@
         const u = S.user;
         const fd = S.friendsData || { friends: [], incoming: [], outgoing: [], invites: [] };
         const visibleFriends = S.friendsShowAll ? fd.friends : fd.friends.slice(0, 3);
-        // Pinned favorites read as photos tacked to the background margins —
-        // desktop-only (the margin space doesn't meaningfully exist on
-        // narrower widths, where the card fills the viewport anyway).
+        // Pinned favorites read as photos tacked to the background margins.
+        // Tablet+ (md, 768px) has enough width to show both side-by-side;
+        // below that (phones), there's no meaningful margin for a second
+        // image to live in, so just the first pin washes the whole page as
+        // a faint backdrop instead of trying to show two.
         // Oldest pin (pinned first) shows left, the other shows right.
         const pinnedFavs = (u.favorites || []).filter(f => f.pinnedAt).sort((a, b) => a.pinnedAt - b.pinnedAt);
+        // Full-bleed background texture, not a framed photo — free to overflow
+        // off the side of the viewport, anchored near the top like it's tacked
+        // to the wall there rather than floating centered.
         const pinnedWallpaper = (fav, side) => fav ? `
-            <div class="hidden xl:block fixed ${side}-8 top-1/2 -translate-y-1/2 w-56 ${side === 'left' ? '-rotate-6' : 'rotate-6'} z-0">
-                <div class="bg-white p-2 pb-6 rounded shadow-2xl">
-                    <img src="${fav.image}" class="w-full max-h-[60vh] object-cover rounded-sm">
-                </div>
-                <div class="absolute -top-3 left-1/2 -translate-x-1/2 text-3xl drop-shadow">📌</div>
+            <div class="hidden md:block fixed ${side}-0 top-10 w-[30vw] ${side === 'left' ? '-rotate-6 -translate-x-[8%]' : 'rotate-6 translate-x-[8%]'} z-0 pointer-events-none">
+                <div class="text-4xl text-center drop-shadow">📌</div>
+                <img src="${fav.image}" class="w-full drop-shadow-2xl">
+            </div>
+        ` : '';
+        const pinnedMobileBg = pinnedFavs[0] ? `
+            <div class="md:hidden fixed inset-0 z-0 pointer-events-none overflow-hidden">
+                <img src="${pinnedFavs[0].image}" class="w-full h-full object-cover opacity-15">
             </div>
         ` : '';
         app.innerHTML = `
         <div class="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 p-4 py-10">
+            ${pinnedMobileBg}
             ${pinnedWallpaper(pinnedFavs[0], 'left')}
             ${pinnedWallpaper(pinnedFavs[1], 'right')}
             <div class="max-w-lg mx-auto relative z-10">
@@ -2997,11 +3006,11 @@
                             ${u.favorites.length > 0 ? u.favorites.map(fav => `
                                 <div class="relative group">
                                     <div class="relative rounded-lg overflow-hidden border-2 border-gray-200 cursor-pointer favSelectArea transition" data-fav-id="${fav.id}" title="Tap to select for combining">
-                                        <div class="favOrderBadge hidden absolute top-1 left-1 z-10 w-6 h-6 rounded-full bg-[#ffec06] text-black text-xs font-bold items-center justify-center shadow-lg">1</div>
+                                        <div class="favOrderBadge hidden absolute bottom-1 right-1 z-10 w-6 h-6 rounded-full bg-[#ffec06] text-black text-xs font-bold items-center justify-center shadow-lg">1</div>
                                         <img src="${fav.image}" class="w-full pointer-events-none">
                                     </div>
                                     <button class="removeFavBtn absolute top-1 right-1 w-6 h-6 bg-red-500 hover:bg-red-600 text-white text-xs rounded-full opacity-0 group-hover:opacity-100 transition" data-fav-id="${fav.id}">✕</button>
-                                    <button class="pinFavBtn absolute bottom-1 left-1 w-6 h-6 rounded-full text-xs transition ${fav.pinnedAt ? 'bg-[#ffec06] text-black opacity-100' : 'bg-black/60 hover:bg-black/80 text-white opacity-0 group-hover:opacity-100'}"
+                                    <button class="pinFavBtn absolute top-1 left-1 w-6 h-6 rounded-full text-xs transition ${fav.pinnedAt ? 'bg-[#ffec06] text-black opacity-100' : 'bg-black/60 hover:bg-black/80 text-white opacity-0 group-hover:opacity-100'}"
                                         data-fav-id="${fav.id}" title="${fav.pinnedAt ? 'Unpin from background' : 'Pin to background'}">📌</button>
                                     ${renderCommentThread(fav.comments || [], `fav:${fav.id}`, u.id)}
                                 </div>
