@@ -1,17 +1,18 @@
 const https = require('https');
 
+const RESEND_API_KEY = process.env.RESEND_API_KEY || null;
+// Resend's shared sandbox sender — fine here since the only email this sends
+// is always to the owner's own (Resend account) verified address.
+const FROM_ADDRESS = process.env.NOTIFY_FROM_EMAIL || 'Exquisite Corpse <onboarding@resend.dev>';
+
 // Owner notification email — sent on every new paid/beta account signup, not
 // per game-join (that'd be dozens/day and low-signal). Overridable via env
 // var so the destination can change without a code edit/redeploy.
 const NOTIFY_EMAIL = process.env.NOTIFY_EMAIL || 'heyrayinks@gmail.com';
-const RESEND_API_KEY = process.env.RESEND_API_KEY || null;
-// Resend's shared sandbox sender — works without verifying a custom domain
-// as long as the destination is the Resend account's own verified address.
-const FROM_ADDRESS = process.env.NOTIFY_FROM_EMAIL || 'Exquisite Corpse <onboarding@resend.dev>';
 
-// Fire-and-forget: a notification failure must never break a real signup.
-// No-ops quietly (just logs) if RESEND_API_KEY isn't configured yet, so the
-// feature degrades gracefully rather than crashing anything.
+// Fire-and-forget, fails safe (logs, never throws) — a broken notification
+// must never break the signup it's attached to. No-ops quietly if
+// RESEND_API_KEY isn't configured, so the feature degrades gracefully.
 exports.notifyNewSignup = (user) => {
   if (!RESEND_API_KEY) {
     console.log('[notify] RESEND_API_KEY not set — skipping new-signup email for', user.email);

@@ -85,7 +85,7 @@
     <script>
     // ================= STATE =================
     const S = {
-        screen: 'home',        // home | lobby | draw | results | signup | login | account | checkoutPending
+        screen: 'home',        // home | lobby | draw | results | signup | login | account | checkoutPending | forgotPassword
         code: sessionStorage.getItem('ec_code') || null,
         playerId: sessionStorage.getItem('ec_playerId') || null,
         game: null,
@@ -115,6 +115,8 @@
         authToken: localStorage.getItem('ec_authToken') || null,
         user: null,            // { id, email, username, avatarDataUrl, paid, favorites, favoritesCount }
         authError: null,
+        forgotQuestion: null,   // security question fetched during the forgot-password flow, once the email's been entered
+        forgotEmail: null,      // the email that question belongs to, carried into the answer+new-password submit
         returnToResults: false, // true if signup/login was triggered from the results screen
         notifyEnabled: localStorage.getItem('ec_notifyEnabled') === 'true',
         // friends state
@@ -690,6 +692,7 @@
         else if (S.screen === 'results') renderResults();
         else if (S.screen === 'signup') renderSignup();
         else if (S.screen === 'login') renderLogin();
+        else if (S.screen === 'forgotPassword') renderForgotPassword();
         else if (S.screen === 'account') renderAccount();
         else if (S.screen === 'friendProfile') renderFriendProfile();
         else if (S.screen === 'checkoutPending') renderCheckoutPending();
@@ -2310,11 +2313,21 @@
     // 3 side-by-side panels happen to closely match the page's own aspect
     // ratio, so this fits almost edge-to-edge. Shared by both the results
     // screen (sheets need stitching first) and favorites (already stitched).
+    //
+    // Panel width is capped well below full OUTPUT_W (2550px) resolution —
+    // at 3 panels that would make a canvas ~75.7 million pixels, past iOS
+    // Safari's canvas allocation ceiling (roughly 4096x4096 / ~16.7M px on
+    // many devices), which fails silently: no error, no download, nothing.
+    // Since this result always gets downscaled again by fitToLetterPage/
+    // fitToSocialSquare afterward anyway, going in at full resolution here
+    // was pure waste — this cap is still sharper than the final page needs.
+    const COMBINE_PANEL_W = 900;
     function combineCompositesRaw(compositeDataUrls) {
         return new Promise((resolve) => {
+            const panelH = Math.round(COMBINE_PANEL_W * (OUTPUT_H * 3) / OUTPUT_W);
             const combined = document.createElement('canvas');
-            combined.width = OUTPUT_W * compositeDataUrls.length;
-            combined.height = OUTPUT_H * 3;
+            combined.width = COMBINE_PANEL_W * compositeDataUrls.length;
+            combined.height = panelH;
             const ctx = combined.getContext('2d');
             ctx.fillStyle = '#ffffff';
             ctx.fillRect(0, 0, combined.width, combined.height);
@@ -2323,7 +2336,7 @@
             compositeDataUrls.forEach((dataUrl, i) => {
                 const img = new Image();
                 img.onload = () => {
-                    ctx.drawImage(img, i * OUTPUT_W, 0, OUTPUT_W, OUTPUT_H * 3);
+                    ctx.drawImage(img, i * COMBINE_PANEL_W, 0, COMBINE_PANEL_W, panelH);
                     loaded++;
                     if (loaded === compositeDataUrls.length) resolve(combined.toDataURL('image/png'));
                 };
@@ -2593,6 +2606,10 @@
                         Log In
                     </button>
 
+                    <p class="text-center mt-3">
+                        <button id="goForgotBtn" class="text-xs text-gray-400 hover:text-gray-600 hover:underline">Forgot password?</button>
+                    </p>
+
                     <p class="text-center text-sm text-gray-500 mt-4">
                         Don't have an account? <button id="goSignupBtn" class="text-black font-semibold hover:underline">Sign up ($2.99)</button>
                     </p>
@@ -2604,6 +2621,12 @@
 
         document.getElementById('backHomeBtn').addEventListener('click', () => { S.returnToResults = false; S.screen = 'home'; render(); });
         document.getElementById('goSignupBtn').addEventListener('click', () => { S.screen = 'signup'; render(); });
+        document.getElementById('goForgotBtn').addEventListener('click', () => {
+            S.forgotQuestion = null;
+            S.forgotEmail = null;
+            S.screen = 'forgotPassword';
+            render();
+        });
 
         function showLoginError(msg) { S.authError = msg; renderLogin(); }
 
@@ -2634,6 +2657,111 @@
 
         document.getElementById('liSubmitBtn').addEventListener('click', submit);
         document.getElementById('liPassword').addEventListener('keypress', e => { if (e.key === 'Enter') submit(); });
+    }
+
+    // ---------- FORGOT PASSWORD (no email dependency — security question) ----------
+    // Two phases on one screen: enter email -> fetch the question they set on
+    // their account page, then answer it + pick a new password in one step.
+    function renderForgotPassword() {
+        const phase = S.forgotQuestion ? 'answer' : 'email';
+        app.innerHTML = `
+        <div class="min-h-screen app-bg p-4 flex items-center justify-center">
+            <div class="w-full max-w-md">
+                <div class="bg-white rounded-2xl shadow-2xl p-8">
+                    <button id="backLoginBtn" class="text-sm text-gray-400 hover:text-gray-600 mb-4">&larr; Back</button>
+                    <h1 class="text-3xl font-bold text-gray-900 mb-2 text-center">Reset Password</h1>
+                    <p class="text-sm text-gray-500 text-center mb-6">
+                        ${phase === 'email' ? "Enter your account email to see your security question." : 'Answer your security question and choose a new password.'}
+                    </p>
+
+                    ${S.authError ? `<div class="mb-4 p-3 bg-red-50 border border-red-300 text-red-700 rounded-lg text-sm">${S.authError}</div>` : ''}
+
+                    ${phase === 'email' ? `
+                        <div class="space-y-3 mb-4">
+                            <input id="fpEmail" type="email" placeholder="Email" class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-[#ffec06]">
+                        </div>
+                        <button id="fpSubmitBtn" class="w-full px-6 py-3 bg-[#ffec06] hover:bg-[#e6d405] text-black font-bold rounded-xl text-lg transition">
+                            Continue
+                        </button>
+                    ` : `
+                        <p class="text-sm font-semibold text-gray-700 mb-3">${escapeHtml(S.forgotQuestion)}</p>
+                        <div class="space-y-3 mb-4">
+                            <input id="fpAnswer" type="text" placeholder="Your answer" class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-[#ffec06]">
+                            <input id="fpNewPassword" type="password" placeholder="New password (min 8 characters)" class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-[#ffec06]">
+                            <input id="fpNewPasswordConfirm" type="password" placeholder="Confirm new password" class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-[#ffec06]">
+                        </div>
+                        <button id="fpSubmitBtn" class="w-full px-6 py-3 bg-[#ffec06] hover:bg-[#e6d405] text-black font-bold rounded-xl text-lg transition">
+                            Set Password
+                        </button>
+                    `}
+                </div>
+            </div>
+        </div>`;
+
+        S.authError = null;
+
+        document.getElementById('backLoginBtn').addEventListener('click', () => {
+            if (S.forgotQuestion) { S.forgotQuestion = null; renderForgotPassword(); return; }
+            S.screen = 'login';
+            render();
+        });
+
+        if (phase === 'email') {
+            const submitEmail = async () => {
+                const email = document.getElementById('fpEmail').value.trim();
+                if (!email) { S.authError = 'Email required.'; return renderForgotPassword(); }
+
+                const btn = document.getElementById('fpSubmitBtn');
+                btn.disabled = true;
+                btn.textContent = 'Checking...';
+
+                try {
+                    const { question } = await api('/auth/security-question', { method: 'POST', body: JSON.stringify({ email }) });
+                    S.forgotEmail = email;
+                    S.forgotQuestion = question;
+                    renderForgotPassword();
+                } catch (e) {
+                    btn.disabled = false;
+                    btn.textContent = 'Continue';
+                    S.authError = e.message;
+                    renderForgotPassword();
+                }
+            };
+            document.getElementById('fpSubmitBtn').addEventListener('click', submitEmail);
+            document.getElementById('fpEmail').addEventListener('keypress', e => { if (e.key === 'Enter') submitEmail(); });
+        } else {
+            const submitAnswer = async () => {
+                const answer = document.getElementById('fpAnswer').value;
+                const newPassword = document.getElementById('fpNewPassword').value;
+                const newPasswordConfirm = document.getElementById('fpNewPasswordConfirm').value;
+                if (!answer) { S.authError = 'Answer required.'; return renderForgotPassword(); }
+                if (newPassword.length < 8) { S.authError = 'Password must be at least 8 characters.'; return renderForgotPassword(); }
+                if (newPassword !== newPasswordConfirm) { S.authError = 'Passwords do not match.'; return renderForgotPassword(); }
+
+                const btn = document.getElementById('fpSubmitBtn');
+                btn.disabled = true;
+                btn.textContent = 'Setting password...';
+
+                try {
+                    const { token, user } = await api('/auth/reset-with-answer', {
+                        method: 'POST',
+                        body: JSON.stringify({ email: S.forgotEmail, answer, newPassword }),
+                    });
+                    S.forgotQuestion = null;
+                    S.forgotEmail = null;
+                    setAuthSession(token, user);
+                    S.screen = 'account';
+                    render();
+                } catch (e) {
+                    btn.disabled = false;
+                    btn.textContent = 'Set Password';
+                    S.authError = e.message;
+                    renderForgotPassword();
+                }
+            };
+            document.getElementById('fpSubmitBtn').addEventListener('click', submitAnswer);
+            document.getElementById('fpNewPasswordConfirm').addEventListener('keypress', e => { if (e.key === 'Enter') submitAnswer(); });
+        }
     }
 
     // ---------- COMMENT THREADS (shared by account page + friend profile) ----------
@@ -2766,14 +2894,47 @@
                         </div>
                     </div>
 
-                    <div class="mb-6">
-                        <label class="block text-xs font-medium text-gray-500 mb-1">Username</label>
-                        <div class="flex gap-2">
-                            <input id="usernameInput" type="text" maxlength="30" value="${u.username}"
-                                class="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500">
-                            <button id="saveUsernameBtn" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-lg">Save</button>
+                    <div class="mb-6 border-2 border-gray-100 rounded-xl p-4">
+                        <h3 class="text-sm font-semibold text-gray-700 mb-4">🔒 Account Settings</h3>
+
+                        <div class="mb-4">
+                            <label class="block text-xs font-medium text-gray-500 mb-1">Username</label>
+                            <div class="flex gap-2">
+                                <input id="usernameInput" type="text" maxlength="30" value="${u.username}"
+                                    class="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500">
+                                <button id="saveUsernameBtn" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-lg">Save</button>
+                            </div>
+                            <p id="usernameMsg" class="text-xs mt-1"></p>
                         </div>
-                        <p id="usernameMsg" class="text-xs mt-1"></p>
+
+                        <div class="mb-4">
+                            <label class="block text-xs font-medium text-gray-500 mb-1">Change password</label>
+                            <div class="space-y-2">
+                                <input id="newPasswordInput" type="password" placeholder="New password (min 8 characters)"
+                                    class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500">
+                                <input id="newPasswordConfirmInput" type="password" placeholder="Confirm new password"
+                                    class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500">
+                                <button id="savePasswordBtn" class="w-full px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-lg">Update Password</button>
+                            </div>
+                            <p id="passwordMsg" class="text-xs mt-1"></p>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-medium text-gray-500 mb-1">
+                                Security question <span class="text-gray-400">(used to reset your password if you forget it)</span>
+                            </label>
+                            <div class="space-y-2">
+                                <input id="securityQuestionInput" type="text" maxlength="200" placeholder="e.g. What was your first pet's name?"
+                                    value="${u.securityQuestion ? escapeHtml(u.securityQuestion) : ''}"
+                                    class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500">
+                                <input id="securityAnswerInput" type="text" placeholder="${u.securityQuestion ? 'New answer' : 'Answer'}"
+                                    class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500">
+                                <button id="saveSecurityBtn" class="w-full px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-lg">
+                                    ${u.securityQuestion ? 'Update Security Question' : 'Set Security Question'}
+                                </button>
+                            </div>
+                            <p id="securityMsg" class="text-xs mt-1"></p>
+                        </div>
                     </div>
 
                     <div class="mb-6">
@@ -2903,6 +3064,63 @@
                     body: JSON.stringify({ username: newUsername }),
                 });
                 S.user = user;
+                msg.textContent = 'Saved!';
+                msg.className = 'text-xs mt-1 text-green-600';
+            } catch (e) {
+                msg.textContent = e.message;
+                msg.className = 'text-xs mt-1 text-red-600';
+            }
+        });
+
+        document.getElementById('savePasswordBtn').addEventListener('click', async () => {
+            const newPassword = document.getElementById('newPasswordInput').value;
+            const newPasswordConfirm = document.getElementById('newPasswordConfirmInput').value;
+            const msg = document.getElementById('passwordMsg');
+            if (!newPassword || newPassword.length < 8) {
+                msg.textContent = 'Password must be at least 8 characters.';
+                msg.className = 'text-xs mt-1 text-red-600';
+                return;
+            }
+            if (newPassword !== newPasswordConfirm) {
+                msg.textContent = 'Passwords do not match.';
+                msg.className = 'text-xs mt-1 text-red-600';
+                return;
+            }
+            try {
+                await authApi('/account/password', { method: 'PUT', body: JSON.stringify({ newPassword }) });
+                document.getElementById('newPasswordInput').value = '';
+                document.getElementById('newPasswordConfirmInput').value = '';
+                msg.textContent = 'Password updated!';
+                msg.className = 'text-xs mt-1 text-green-600';
+            } catch (e) {
+                msg.textContent = e.message;
+                msg.className = 'text-xs mt-1 text-red-600';
+            }
+        });
+
+        document.getElementById('saveSecurityBtn').addEventListener('click', async () => {
+            const question = document.getElementById('securityQuestionInput').value.trim();
+            const answer = document.getElementById('securityAnswerInput').value;
+            const msg = document.getElementById('securityMsg');
+            if (!question) {
+                msg.textContent = 'Question required.';
+                msg.className = 'text-xs mt-1 text-red-600';
+                return;
+            }
+            if (!answer.trim()) {
+                msg.textContent = 'Answer required.';
+                msg.className = 'text-xs mt-1 text-red-600';
+                return;
+            }
+            try {
+                const { user } = await authApi('/account/security-question', {
+                    method: 'PUT',
+                    body: JSON.stringify({ question, answer }),
+                });
+                S.user = user;
+                document.getElementById('securityAnswerInput').value = '';
+                document.getElementById('saveSecurityBtn').textContent = 'Update Security Question';
+                document.getElementById('securityAnswerInput').placeholder = 'New answer';
                 msg.textContent = 'Saved!';
                 msg.className = 'text-xs mt-1 text-green-600';
             } catch (e) {

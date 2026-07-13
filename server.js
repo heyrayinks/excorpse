@@ -332,6 +332,38 @@ function handleApi(req, res, url) {
     });
   }
 
+  // POST /api/auth/security-question { email } — no email dependency:
+  // recovery is a security question set from the account page while logged
+  // in. Returns 404 with the same generic message whether the email doesn't
+  // exist or just never set one up, so this can't be used to probe accounts.
+  if (url.pathname === '/api/auth/security-question' && req.method === 'POST') {
+    return readBody(req, 10_000, async (err, body) => {
+      if (err) return json(res, 400, { error: err.message });
+      try {
+        const result = await auth.handleGetSecurityQuestion(body);
+        json(res, 200, result);
+      } catch (e) {
+        const status = e.status || 500;
+        json(res, status, { error: e.error || e.message });
+      }
+    });
+  }
+
+  // POST /api/auth/reset-with-answer { email, answer, newPassword } — logs
+  // the user in on success (same auto-login pattern as checkout/beta signup)
+  if (url.pathname === '/api/auth/reset-with-answer' && req.method === 'POST') {
+    return readBody(req, 10_000, async (err, body) => {
+      if (err) return json(res, 400, { error: err.message });
+      try {
+        const result = await auth.handleResetWithAnswer(body);
+        json(res, 200, result);
+      } catch (e) {
+        const status = e.status || 500;
+        json(res, status, { error: e.error || e.message });
+      }
+    });
+  }
+
   // ===== ACCOUNT ENDPOINTS (require auth) =====
   if (url.pathname === '/api/account/me' && req.method === 'GET') {
     try {
@@ -351,6 +383,44 @@ function handleApi(req, res, url) {
         if (err) return json(res, 400, { error: err.message });
         try {
           const user = await account.updateUsername(userId, body.username);
+          json(res, 200, { user });
+        } catch (e) {
+          const status = e.status || 500;
+          json(res, status, { error: e.error || e.message });
+        }
+      });
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.error || e.message });
+    }
+  }
+
+  if (url.pathname === '/api/account/password' && req.method === 'PUT') {
+    try {
+      const userId = auth.extractAndVerifyToken(req);
+      return readBody(req, 10_000, async (err, body) => {
+        if (err) return json(res, 400, { error: err.message });
+        try {
+          const user = await auth.handleUpdatePassword(userId, body);
+          json(res, 200, { user });
+        } catch (e) {
+          const status = e.status || 500;
+          json(res, status, { error: e.error || e.message });
+        }
+      });
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.error || e.message });
+    }
+  }
+
+  if (url.pathname === '/api/account/security-question' && req.method === 'PUT') {
+    try {
+      const userId = auth.extractAndVerifyToken(req);
+      return readBody(req, 10_000, async (err, body) => {
+        if (err) return json(res, 400, { error: err.message });
+        try {
+          const user = await auth.handleUpdateSecurityQuestion(userId, body);
           json(res, 200, { user });
         } catch (e) {
           const status = e.status || 500;

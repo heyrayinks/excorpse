@@ -13,6 +13,7 @@ function serializeUser(user) {
     friendsCount: user.friends.length,
     pendingRequestsReceived: user.friendRequestsReceived.length,
     profileComments: user.profileComments,
+    securityQuestion: user.securityQuestion || null, // question text only — never the answer hash
   };
 }
 
@@ -51,6 +52,23 @@ exports.updateAvatar = (userId, dataUrl) => {
 
   return data.updateUser(userId, { avatarDataUrl: dataUrl })
     .then(user => serializeUser(user));
+};
+
+// PUT /api/account/password - Update password (already-hashed by auth.js,
+// which owns the hashing logic — this stays a plain persistence step)
+exports.updatePassword = (userId, passwordHash, passwordSalt) => {
+  return data.updateUser(userId, { passwordHash, passwordSalt })
+    .then(user => serializeUser(user));
+};
+
+// PUT /api/account/security-question - Set/change the password-recovery
+// question (already-hashed answer, same split as updatePassword above)
+exports.updateSecurityQuestion = (userId, question, answerHash, answerSalt) => {
+  return data.updateUser(userId, {
+    securityQuestion: question,
+    securityAnswerHash: answerHash,
+    securityAnswerSalt: answerSalt,
+  }).then(user => serializeUser(user));
 };
 
 // POST /api/account/favorites - Save a drawing to favorites

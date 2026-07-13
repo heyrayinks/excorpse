@@ -96,7 +96,7 @@ exports.getUserByUsername = (username) => {
   return users.find(u => u.username.toLowerCase() === username.toLowerCase()) || null;
 };
 
-exports.createUser = (email, username, passwordHash, passwordSalt, stripeCustomerId, stripeCheckoutSessionId, signupMethod = 'stripe') => {
+exports.createUser = (email, username, passwordHash, passwordSalt, stripeCustomerId, stripeCheckoutSessionId, signupMethod = 'stripe', securityQuestion = null, securityAnswerHash = null, securityAnswerSalt = null) => {
   return queue(() => {
     const data = readUsers();
     // Re-validate on write (defensive)
@@ -120,6 +120,11 @@ exports.createUser = (email, username, passwordHash, passwordSalt, stripeCustome
       stripeCheckoutSessionId,
       createdAt: Date.now(),
       favorites: [],
+      // Password reset uses a security question instead of email — this app
+      // has nothing sensitive enough to warrant email-verification infra.
+      securityQuestion,
+      securityAnswerHash,
+      securityAnswerSalt,
     };
     normalizeUser(user);
 
