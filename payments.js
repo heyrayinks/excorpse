@@ -2,6 +2,7 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const auth = require('./auth');
 const data = require('./data');
 const account = require('./account');
+const notify = require('./notify');
 
 // Stored as an env var (not a source-code literal) since this repo is public —
 // hardcoding it here would make it visible to anyone browsing GitHub.
@@ -93,6 +94,7 @@ exports.handleBetaSignup = async (body) => {
 
   const { passwordHash, passwordSalt } = auth.hashPassword(password);
   const user = await data.createUser(email, username, passwordHash, passwordSalt, null, null, 'beta');
+  notify.notifyNewSignup(user);
 
   const token = auth.signToken(user.id);
   return { token, user: account.serializeUser(user) };
@@ -118,6 +120,7 @@ exports.handleCheckoutComplete = async (event) => {
   // Create the user with paid: true
   const user = await data.createUser(email, username, passwordHash, passwordSalt, session.customer, session.id);
   console.log('User created via webhook:', user.id, email);
+  notify.notifyNewSignup(user);
 
   return user;
 };
