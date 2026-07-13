@@ -188,7 +188,7 @@
     // Shared replacement for the browser's native confirm() dialog — appended
     // directly to <body> (not #app) so it survives whichever screen's
     // app.innerHTML render triggered it. Resolves true/false like confirm() did.
-    function showConfirmModal({ title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', icon = '⚠️', confirmClass = 'bg-red-600 hover:bg-red-700' }) {
+    function showConfirmModal({ title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', icon = '⚠️', confirmClass = 'bg-red-600 hover:bg-red-700', confirmTextClass = 'text-white' }) {
         return new Promise(resolve => {
             const overlay = document.createElement('div');
             overlay.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4';
@@ -199,7 +199,7 @@
                     <p class="text-gray-500 text-sm mb-6">${message}</p>
                     <div class="flex gap-3">
                         <button class="confirmModalCancelBtn flex-1 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl">${cancelLabel}</button>
-                        <button class="confirmModalOkBtn flex-1 px-4 py-2.5 ${confirmClass} text-white font-bold rounded-xl">${confirmLabel}</button>
+                        <button class="confirmModalOkBtn flex-1 px-4 py-2.5 ${confirmClass} ${confirmTextClass} font-bold rounded-xl">${confirmLabel}</button>
                     </div>
                 </div>`;
             document.body.appendChild(overlay);
@@ -273,7 +273,8 @@
             confirmLabel: 'Start your own game',
             cancelLabel: 'Cancel',
             icon: '😅',
-            confirmClass: 'bg-purple-600 hover:bg-purple-700',
+            confirmClass: 'bg-[#ffec06] hover:bg-[#e6d405]',
+            confirmTextClass: 'text-black',
         });
     }
     function isJoinFullOrStarted(e) {
@@ -1132,7 +1133,7 @@
                     <p id="inspWordEl" class="text-4xl font-bold text-purple-700 capitalize mb-6">${S.inspWord}</p>
                     <div class="flex gap-3">
                         <button id="inspReroll" class="flex-1 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl">🎲 Another</button>
-                        <button id="inspClose" class="flex-1 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl">Let's draw!</button>
+                        <button id="inspClose" class="flex-1 px-4 py-2.5 bg-[#ffec06] hover:bg-[#e6d405] text-black font-bold rounded-xl">Let's draw!</button>
                     </div>
                     <p class="mt-4 text-xs text-gray-400">Just a nudge — draw whatever you like.</p>
                 </div>
@@ -1953,7 +1954,7 @@
                         list.innerHTML = friends.length ? friends.map(f => `
                             <div class="flex items-center justify-between bg-white rounded-lg px-3 py-2 border border-gray-200">
                                 <span class="text-sm text-gray-700">${escapeHtml(f.username)}</span>
-                                <button class="inviteFriendToGameBtn text-xs px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded" data-user-id="${f.id}">Invite</button>
+                                <button class="inviteFriendToGameBtn text-xs px-2 py-1 bg-[#ffec06] hover:bg-[#e6d405] text-black rounded" data-user-id="${f.id}">Invite</button>
                             </div>
                         `).join('') : `<p class="text-xs text-gray-400 italic">No friends yet.</p>`;
                         list.querySelectorAll('.inviteFriendToGameBtn').forEach(btn => {
@@ -2572,7 +2573,7 @@
                     <h2 class="text-2xl font-bold mb-2">Payment received!</h2>
                     <p class="text-gray-600 mb-6" id="checkoutStatusMsg">Setting up your account...</p>
                     <div id="checkoutManualLogin" class="hidden">
-                        <button id="checkoutLoginBtn" class="w-full px-4 py-3 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl">Log in now</button>
+                        <button id="checkoutLoginBtn" class="w-full px-4 py-3 bg-[#ffec06] hover:bg-[#e6d405] text-black font-bold rounded-xl">Log in now</button>
                     </div>
                 </div>
             </div>
@@ -2814,7 +2815,7 @@
                         `).join('') : `<p class="text-xs text-gray-400 italic py-1">No comments yet.</p>`}
                         <div class="flex gap-1 mt-2">
                             <input type="text" class="commentInput flex-1 px-2 py-1 border border-gray-300 rounded text-xs" data-key="${key}" placeholder="Add a comment..." maxlength="500">
-                            <button class="submitCommentBtn text-xs px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded" data-key="${key}">Post</button>
+                            <button class="submitCommentBtn text-xs px-2 py-1 bg-[#ffec06] hover:bg-[#e6d405] text-black rounded" data-key="${key}">Post</button>
                         </div>
                     </div>
                 ` : ''}
@@ -2913,7 +2914,7 @@
                             <div id="avatarPreview" class="w-16 h-16 rounded-full bg-purple-100 flex items-center justify-center text-2xl font-bold text-purple-600 overflow-hidden">
                                 ${u.avatarDataUrl ? `<img src="${u.avatarDataUrl}" class="w-full h-full object-cover">` : u.username.slice(0, 1).toUpperCase()}
                             </div>
-                            <label class="absolute -bottom-1 -right-1 w-6 h-6 bg-purple-600 hover:bg-purple-700 rounded-full flex items-center justify-center text-white text-xs cursor-pointer" title="Upload avatar">
+                            <label class="absolute -bottom-1 -right-1 w-6 h-6 bg-[#ffec06] hover:bg-[#e6d405] rounded-full flex items-center justify-center text-black text-xs cursor-pointer" title="Upload avatar">
                                 📷
                                 <input id="avatarInput" type="file" accept="image/png,image/jpeg" class="hidden">
                             </label>
@@ -2937,8 +2938,8 @@
                             <label class="block text-xs font-medium text-gray-500 mb-1">Username</label>
                             <div class="flex gap-2">
                                 <input id="usernameInput" type="text" maxlength="30" value="${u.username}"
-                                    class="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500">
-                                <button id="saveUsernameBtn" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-lg">Save</button>
+                                    class="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-[#ffec06]">
+                                <button id="saveUsernameBtn" class="px-4 py-2 bg-[#ffec06] hover:bg-[#e6d405] text-black text-sm font-semibold rounded-lg">Save</button>
                             </div>
                             <p id="usernameMsg" class="text-xs mt-1"></p>
                         </div>
@@ -2947,10 +2948,10 @@
                             <label class="block text-xs font-medium text-gray-500 mb-1">Change password</label>
                             <div class="space-y-2">
                                 <input id="newPasswordInput" type="password" placeholder="New password (min 8 characters)"
-                                    class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500">
+                                    class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-[#ffec06]">
                                 <input id="newPasswordConfirmInput" type="password" placeholder="Confirm new password"
-                                    class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500">
-                                <button id="savePasswordBtn" class="w-full px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-lg">Update Password</button>
+                                    class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-[#ffec06]">
+                                <button id="savePasswordBtn" class="w-full px-4 py-2 bg-[#ffec06] hover:bg-[#e6d405] text-black text-sm font-semibold rounded-lg">Update Password</button>
                             </div>
                             <p id="passwordMsg" class="text-xs mt-1"></p>
                         </div>
@@ -2962,10 +2963,10 @@
                             <div class="space-y-2">
                                 <input id="securityQuestionInput" type="text" maxlength="200" placeholder="e.g. What was your first pet's name?"
                                     value="${u.securityQuestion ? escapeHtml(u.securityQuestion) : ''}"
-                                    class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500">
+                                    class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-[#ffec06]">
                                 <input id="securityAnswerInput" type="text" placeholder="${u.securityQuestion ? 'New answer' : 'Answer'}"
-                                    class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500">
-                                <button id="saveSecurityBtn" class="w-full px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-lg">
+                                    class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-[#ffec06]">
+                                <button id="saveSecurityBtn" class="w-full px-4 py-2 bg-[#ffec06] hover:bg-[#e6d405] text-black text-sm font-semibold rounded-lg">
                                     ${u.securityQuestion ? 'Update Security Question' : 'Set Security Question'}
                                 </button>
                             </div>
@@ -2981,7 +2982,7 @@
                             ${u.favorites.length > 0 ? u.favorites.map(fav => `
                                 <div class="relative group">
                                     <div class="relative rounded-lg overflow-hidden border-2 border-gray-200 cursor-pointer favSelectArea transition" data-fav-id="${fav.id}" title="Tap to select for combining">
-                                        <div class="favOrderBadge hidden absolute top-1 left-1 z-10 w-6 h-6 rounded-full bg-purple-600 text-white text-xs font-bold items-center justify-center shadow-lg">1</div>
+                                        <div class="favOrderBadge hidden absolute top-1 left-1 z-10 w-6 h-6 rounded-full bg-[#ffec06] text-black text-xs font-bold items-center justify-center shadow-lg">1</div>
                                         <img src="${fav.image}" class="w-full pointer-events-none">
                                     </div>
                                     <button class="removeFavBtn absolute top-1 right-1 w-6 h-6 bg-red-500 hover:bg-red-600 text-white text-xs rounded-full opacity-0 group-hover:opacity-100 transition" data-fav-id="${fav.id}">✕</button>
@@ -3044,8 +3045,8 @@
                     <div class="mb-6">
                         <h3 class="text-sm font-semibold text-gray-700 mb-2">👥 Friends${fd.friends.length ? ` (${fd.friends.length})` : ''}</h3>
                         <div class="flex gap-2 mb-2">
-                            <input id="addFriendInput" type="text" placeholder="Add friend by username" class="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg text-sm focus:outline-none focus:border-purple-500">
-                            <button id="addFriendBtn" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-lg">Add</button>
+                            <input id="addFriendInput" type="text" placeholder="Add friend by username" class="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg text-sm focus:outline-none focus:border-[#ffec06]">
+                            <button id="addFriendBtn" class="px-4 py-2 bg-[#ffec06] hover:bg-[#e6d405] text-black text-sm font-semibold rounded-lg">Add</button>
                         </div>
                         <p id="addFriendMsg" class="text-xs mb-3"></p>
 
@@ -3235,12 +3236,12 @@
                 const idx = selectedFavIds.indexOf(favId);
                 const badge = area.querySelector('.favOrderBadge');
                 if (idx !== -1) {
-                    area.classList.add('ring-4', 'ring-purple-500');
+                    area.classList.add('ring-4', 'ring-[#ffec06]');
                     badge.classList.remove('hidden');
                     badge.classList.add('flex');
                     badge.textContent = idx + 1;
                 } else {
-                    area.classList.remove('ring-4', 'ring-purple-500');
+                    area.classList.remove('ring-4', 'ring-[#ffec06]');
                     badge.classList.add('hidden');
                     badge.classList.remove('flex');
                 }
@@ -3251,7 +3252,7 @@
             if (combineBtn) {
                 const enabled = selectedFavIds.length >= 2;
                 combineBtn.disabled = !enabled;
-                combineBtn.className = `w-full px-4 py-2.5 font-semibold text-sm rounded-xl border ${enabled ? 'bg-purple-600 hover:bg-purple-700 text-white border-purple-600 cursor-pointer' : 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'}`;
+                combineBtn.className = `w-full px-4 py-2.5 font-semibold text-sm rounded-xl border ${enabled ? 'bg-[#ffec06] hover:bg-[#e6d405] text-black border-[#ffec06] cursor-pointer' : 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'}`;
             }
         }
         document.querySelectorAll('.favSelectArea').forEach(area => {
@@ -3438,7 +3439,7 @@
                         </div>
                         <h1 class="text-xl font-bold text-gray-900 flex-1">${escapeHtml(p.username)}</h1>
                     </div>
-                    <button id="inviteToGameBtn" class="w-full mb-6 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-semibold text-sm rounded-xl">
+                    <button id="inviteToGameBtn" class="w-full mb-6 px-4 py-2.5 bg-[#ffec06] hover:bg-[#e6d405] text-black font-semibold text-sm rounded-xl">
                         🎮 Start a game with ${escapeHtml(p.username)}
                     </button>
 
