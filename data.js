@@ -168,6 +168,7 @@ exports.addFavorite = (userId, image, gameCode, artists, inspirations) => {
       artists,
       inspirations,
       savedAt: Date.now(),
+      pinnedAt: null,
     };
 
     user.favorites.push(favorite);
@@ -182,6 +183,30 @@ exports.removeFavorite = (userId, favoriteId) => {
     if (!user) throw new Error('User not found');
 
     user.favorites = user.favorites.filter(f => f.id !== favoriteId);
+    return writeUsers(data).then(() => user);
+  });
+};
+
+// Pins a favorite to the account page's background wallpaper (max 2 — first
+// pinned reads on the left, second on the right, by pin order). Pinning a
+// 3rd bumps whichever was pinned first rather than blocking, since that's
+// the least-surprising behavior with only two slots.
+exports.togglePinFavorite = (userId, favoriteId) => {
+  return queue(() => {
+    const data = readUsers();
+    const user = data.users.find(u => u.id === userId);
+    if (!user) throw new Error('User not found');
+    const favorite = user.favorites.find(f => f.id === favoriteId);
+    if (!favorite) throw new Error('Favorite not found');
+
+    if (favorite.pinnedAt) {
+      favorite.pinnedAt = null;
+    } else {
+      const pinned = user.favorites.filter(f => f.pinnedAt).sort((a, b) => a.pinnedAt - b.pinnedAt);
+      if (pinned.length >= 2) pinned[0].pinnedAt = null;
+      favorite.pinnedAt = Date.now();
+    }
+
     return writeUsers(data).then(() => user);
   });
 };

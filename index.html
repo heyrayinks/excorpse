@@ -2904,9 +2904,24 @@
         const u = S.user;
         const fd = S.friendsData || { friends: [], incoming: [], outgoing: [], invites: [] };
         const visibleFriends = S.friendsShowAll ? fd.friends : fd.friends.slice(0, 3);
+        // Pinned favorites read as photos tacked to the background margins —
+        // desktop-only (the margin space doesn't meaningfully exist on
+        // narrower widths, where the card fills the viewport anyway).
+        // Oldest pin (pinned first) shows left, the other shows right.
+        const pinnedFavs = (u.favorites || []).filter(f => f.pinnedAt).sort((a, b) => a.pinnedAt - b.pinnedAt);
+        const pinnedWallpaper = (fav, side) => fav ? `
+            <div class="hidden xl:block fixed ${side}-8 top-1/2 -translate-y-1/2 w-56 ${side === 'left' ? '-rotate-6' : 'rotate-6'} z-0">
+                <div class="bg-white p-2 pb-6 rounded shadow-2xl">
+                    <img src="${fav.image}" class="w-full max-h-[60vh] object-cover rounded-sm">
+                </div>
+                <div class="absolute -top-3 left-1/2 -translate-x-1/2 text-3xl drop-shadow">📌</div>
+            </div>
+        ` : '';
         app.innerHTML = `
         <div class="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 p-4 py-10">
-            <div class="max-w-lg mx-auto">
+            ${pinnedWallpaper(pinnedFavs[0], 'left')}
+            ${pinnedWallpaper(pinnedFavs[1], 'right')}
+            <div class="max-w-lg mx-auto relative z-10">
                 <button id="backHomeBtn" class="text-sm text-gray-400 hover:text-gray-600 mb-4">&larr; Back to home</button>
                 <div class="bg-white rounded-2xl shadow-lg p-8">
                     <div class="flex items-center gap-4 mb-6">
@@ -2986,6 +3001,8 @@
                                         <img src="${fav.image}" class="w-full pointer-events-none">
                                     </div>
                                     <button class="removeFavBtn absolute top-1 right-1 w-6 h-6 bg-red-500 hover:bg-red-600 text-white text-xs rounded-full opacity-0 group-hover:opacity-100 transition" data-fav-id="${fav.id}">✕</button>
+                                    <button class="pinFavBtn absolute bottom-1 left-1 w-6 h-6 rounded-full text-xs transition ${fav.pinnedAt ? 'bg-[#ffec06] text-black opacity-100' : 'bg-black/60 hover:bg-black/80 text-white opacity-0 group-hover:opacity-100'}"
+                                        data-fav-id="${fav.id}" title="${fav.pinnedAt ? 'Unpin from background' : 'Pin to background'}">📌</button>
                                     ${renderCommentThread(fav.comments || [], `fav:${fav.id}`, u.id)}
                                 </div>
                             `).join('') : `<p class="col-span-3 text-sm text-gray-400 italic">No favorites saved yet — finish a game and save your favorite creation!</p>`}
@@ -3224,6 +3241,18 @@
                     renderAccount();
                 } catch (e) {
                     alert('Could not remove favorite: ' + e.message);
+                }
+            });
+        });
+
+        document.querySelectorAll('.pinFavBtn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                try {
+                    const { user } = await authApi(`/account/favorites/${btn.dataset.favId}/pin`, { method: 'PUT' });
+                    S.user = user;
+                    renderAccount();
+                } catch (e) {
+                    alert('Could not update pin: ' + e.message);
                 }
             });
         });

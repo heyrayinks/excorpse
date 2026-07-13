@@ -494,6 +494,23 @@ function handleApi(req, res, url) {
     }
   }
 
+  const favPinMatch = url.pathname.match(/^\/api\/account\/favorites\/([a-f0-9-]+)\/pin$/);
+  if (favPinMatch && req.method === 'PUT') {
+    try {
+      const userId = auth.extractAndVerifyToken(req);
+      account.togglePinFavorite(userId, favPinMatch[1]).then(user => {
+        json(res, 200, { user });
+      }).catch(e => {
+        const status = e.status || 500;
+        json(res, status, { error: e.error || e.message });
+      });
+      return;
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.error || e.message });
+    }
+  }
+
   // ===== FRIENDS ENDPOINTS (require auth) =====
   if (url.pathname === '/api/friends' && req.method === 'GET') {
     try {

@@ -109,3 +109,10 @@ exports.removeFavorite = (userId, favoriteId) => {
   return data.removeFavorite(userId, favoriteId)
     .then(user => serializeUser(user));
 };
+
+// PUT /api/account/favorites/:favoriteId/pin - Toggle pinning to the account
+// page's background wallpaper (max 2 pinned, see data.js for bump behavior)
+exports.togglePinFavorite = (userId, favoriteId) => {
+  return data.togglePinFavorite(userId, favoriteId)
+    .then(user => serializeUser(user));
+};
