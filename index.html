@@ -122,6 +122,7 @@
         // friends state
         friendsData: null,      // cached { friends, incoming, outgoing } for the account page
         friendsShowAll: false,
+        accountTab: 'profile', // 'profile' | 'settings' — which tab is showing on the account page
         expandedCommentKey: null, // which favorite/profile comment thread is expanded, e.g. "fav:<id>" or "profile"
         friendProfileUserId: null,
         friendProfileData: null,
@@ -1858,7 +1859,11 @@
                         <button id="cancelPassthroughBtn" class="w-full px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-500 text-sm font-medium rounded-lg">
                             Cancel game
                         </button>
-                    ` : ''}
+                    ` : `
+                        <button id="cancelWaitingBtn" class="w-full px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-500 text-sm font-medium rounded-lg">
+                            Stuck waiting? Cancel this game
+                        </button>
+                    `}
                     ${g.mode === 'passthrough' && S.authToken && S.user ? `
                         <button id="passAnotherSheetBtn" class="w-full mt-3 px-4 py-2 bg-[#fffce8] hover:bg-[#fff9d1] text-black text-sm font-semibold rounded-lg border border-[#ffec06]">
                             🎨 Pass another sheet — start a new chain
@@ -1897,6 +1902,31 @@
             // navigating away no longer gets forced back here mid-poll.
             waitingViewProfileBtn.addEventListener('click', () => {
                 S.screen = 'account';
+                render();
+            });
+        }
+
+        // Covers the gap the passthrough-only cancel button doesn't: once a
+        // game is fully active (or a passthrough chain's roster is full) and
+        // one player goes AFK/disconnects mid-round, whoever's left waiting
+        // had no way out before this — they'd just poll forever.
+        const cancelWaitingBtn = document.getElementById('cancelWaitingBtn');
+        if (cancelWaitingBtn) {
+            cancelWaitingBtn.addEventListener('click', async () => {
+                const ok = await showConfirmModal({
+                    title: 'Cancel this game?',
+                    message: 'This ends it for everyone still playing — nobody will be able to finish it.',
+                    confirmLabel: 'Cancel game',
+                    cancelLabel: 'Keep waiting',
+                });
+                if (!ok) return;
+                try {
+                    await api(`/games/${g.code}/cancel`, { method: 'POST', body: JSON.stringify({ playerId: S.playerId }) });
+                } catch (e) { /* game is being abandoned regardless of server outcome */ }
+                stopPolling();
+                clearSession();
+                S.screen = 'home';
+                history.replaceState(null, '', '/');
                 render();
             });
         }
@@ -2894,6 +2924,12 @@
                         </div>
                     </div>
 
+                    <div class="flex gap-2 mb-6 border-b border-gray-200">
+                        <button id="tabProfileBtn" class="px-4 py-2 text-sm font-semibold border-b-2 ${S.accountTab === 'profile' ? 'border-[#ffec06] text-black' : 'border-transparent text-gray-400 hover:text-gray-600'}">Profile</button>
+                        <button id="tabSettingsBtn" class="px-4 py-2 text-sm font-semibold border-b-2 ${S.accountTab === 'settings' ? 'border-[#ffec06] text-black' : 'border-transparent text-gray-400 hover:text-gray-600'}">⚙️ Settings</button>
+                    </div>
+
+                    ${S.accountTab === 'settings' ? `
                     <div class="mb-6 border-2 border-gray-100 rounded-xl p-4">
                         <h3 class="text-sm font-semibold text-gray-700 mb-4">🔒 Account Settings</h3>
 
@@ -2937,6 +2973,8 @@
                         </div>
                     </div>
 
+                    <button id="logoutBtn" class="w-full px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-semibold rounded-lg">Log Out</button>
+                    ` : `
                     <div class="mb-6">
                         <h3 class="text-sm font-semibold text-gray-700 mb-2">⭐ Favorites (${u.favorites.length}/${MAX_FAVORITES})</h3>
                         <div class="grid grid-cols-3 gap-3">
@@ -3042,6 +3080,7 @@
                     </div>
 
                     <button id="logoutBtn" class="w-full px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-semibold rounded-lg">Log Out</button>
+                    `}
                 </div>
             </div>
         </div>`;
@@ -3054,6 +3093,10 @@
             render();
         });
 
+        document.getElementById('tabProfileBtn').addEventListener('click', () => { S.accountTab = 'profile'; render(); });
+        document.getElementById('tabSettingsBtn').addEventListener('click', () => { S.accountTab = 'settings'; render(); });
+
+        if (S.accountTab === 'settings') {
         document.getElementById('saveUsernameBtn').addEventListener('click', async () => {
             const newUsername = document.getElementById('usernameInput').value.trim();
             const msg = document.getElementById('usernameMsg');
@@ -3128,6 +3171,7 @@
                 msg.className = 'text-xs mt-1 text-red-600';
             }
         });
+        } // end S.accountTab === 'settings'
 
         document.getElementById('avatarInput').addEventListener('change', (e) => {
             const file = e.target.files[0];
@@ -3163,8 +3207,16 @@
             reader.readAsDataURL(file);
         });
 
+        if (S.accountTab === 'profile') {
         document.querySelectorAll('.removeFavBtn').forEach(btn => {
             btn.addEventListener('click', async () => {
+                const ok = await showConfirmModal({
+                    title: 'Remove this favorite?',
+                    message: "This can't be undone.",
+                    confirmLabel: 'Remove',
+                    cancelLabel: 'Keep it',
+                });
+                if (!ok) return;
                 try {
                     const { user } = await authApi(`/account/favorites/${btn.dataset.favId}`, { method: 'DELETE' });
                     S.user = user;
@@ -3355,6 +3407,7 @@
                 render();
             });
         });
+        } // end S.accountTab === 'profile'
     }
 
     // ---------- FRIEND PROFILE ----------
