@@ -2915,7 +2915,7 @@
         // off the side of the viewport, anchored near the top like it's tacked
         // to the wall there rather than floating centered.
         const pinnedWallpaper = (fav, side) => fav ? `
-            <div class="hidden md:block fixed ${side}-0 top-10 w-[30vw] ${side === 'left' ? '-rotate-6 -translate-x-[8%]' : 'rotate-6 translate-x-[8%]'} z-0 pointer-events-none">
+            <div class="hidden md:block fixed ${side}-0 top-10 w-[30vw] ${side === 'left' ? '-translate-x-[8%]' : 'translate-x-[8%]'} z-0 pointer-events-none">
                 <div class="text-4xl text-center drop-shadow">📌</div>
                 <img src="${fav.image}" class="w-full drop-shadow-2xl">
             </div>
