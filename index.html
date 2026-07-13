@@ -57,10 +57,10 @@
            via the --app-bg-image custom property so every screen's template just
            needs the .app-bg class, no per-template wiring. The dark gradient layer
            keeps white cards readable regardless of which photo is showing; it
-           renders alone (over the purple fallback color) until JS sets the variable. */
+           renders alone (over the white fallback color) until JS sets the variable. */
         :root { --app-bg-image: none; }
         .app-bg {
-            background-color: #5b21b6;
+            background-color: #ffffff;
             background-size: cover;
             background-position: center;
             background-image: linear-gradient(rgba(0,0,0,.45), rgba(0,0,0,.45)), var(--app-bg-image);
