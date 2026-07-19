@@ -411,6 +411,29 @@ function handleApi(req, res, url) {
     return;
   }
 
+  // ===== ADMIN =====
+  // DELETE /api/admin/users?email=... — secret-gated escape hatch for
+  // removing test/spam accounts, since this app has no admin role/dashboard
+  // (single-operator hobby app; a whole role system would be more surface
+  // area than the problem justifies). Same env-only-secret pattern as
+  // BETA_CODE — never a source literal, since this repo is public.
+  if (url.pathname === '/api/admin/users' && req.method === 'DELETE') {
+    const ADMIN_SECRET = process.env.ADMIN_SECRET || null;
+    if (!ADMIN_SECRET) return json(res, 403, { error: 'Admin endpoint is not enabled' });
+    if (req.headers['x-admin-secret'] !== ADMIN_SECRET) return json(res, 403, { error: 'Invalid admin secret' });
+
+    const email = url.searchParams.get('email');
+    if (!email) return json(res, 400, { error: 'email required' });
+    const user = data.getUserByEmail(email);
+    if (!user) return json(res, 404, { error: 'User not found' });
+
+    return data.deleteUser(user.id).then(() => {
+      json(res, 200, { deleted: true, email });
+    }).catch(e => {
+      json(res, 500, { error: e.message });
+    });
+  }
+
   // ===== AUTH =====
   // POST /api/auth/signup { email, username, password } — free, instant
   // account creation. No payment involved; the account can subscribe (or
@@ -495,6 +518,26 @@ function handleApi(req, res, url) {
       const userId = auth.extractAndVerifyToken(req);
       const user = account.getMe(userId);
       return json(res, 200, { user });
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.error || e.message });
+    }
+  }
+
+  // DELETE /api/account/me { password } — permanent self-service deletion
+  if (url.pathname === '/api/account/me' && req.method === 'DELETE') {
+    try {
+      const userId = auth.extractAndVerifyToken(req);
+      return readBody(req, 10_000, async (err, body) => {
+        if (err) return json(res, 400, { error: err.message });
+        try {
+          const result = await auth.handleDeleteAccount(userId, body);
+          json(res, 200, result);
+        } catch (e) {
+          const status = e.status || 500;
+          json(res, status, { error: e.error || e.message });
+        }
+      });
     } catch (e) {
       const status = e.status || 500;
       return json(res, status, { error: e.error || e.message });

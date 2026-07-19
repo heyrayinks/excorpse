@@ -155,6 +155,35 @@ exports.updateUser = (id, updates) => {
   });
 };
 
+// Hard delete — the record is actually removed, not soft-marked, matching
+// how the rest of this app already treats deletion (removing a favorite is
+// already instant/permanent, no undo/trash anywhere). Sweeps every OTHER
+// user's foreign references to this id before removing the record itself:
+// friend lists/requests, sent game invites, and the games-played-together
+// counter. Comments this user left on other people's favorites/profiles are
+// deliberately left alone — authorUsername is already stored denormalized
+// on the comment record, so it behaves like any other "deleted user, text
+// stays" comment history.
+exports.deleteUser = (userId) => {
+  return queue(() => {
+    const data = readUsers();
+    const user = data.users.find(u => u.id === userId);
+    if (!user) throw new Error('User not found');
+
+    data.users.forEach(u => {
+      if (u.id === userId) return;
+      u.friends = u.friends.filter(f => f.userId !== userId);
+      u.friendRequestsSent = u.friendRequestsSent.filter(r => r.userId !== userId);
+      u.friendRequestsReceived = u.friendRequestsReceived.filter(r => r.userId !== userId);
+      u.gameInvites = u.gameInvites.filter(i => i.fromUserId !== userId);
+      delete u.gamesPlayedWith[userId];
+    });
+
+    data.users = data.users.filter(u => u.id !== userId);
+    return writeUsers(data);
+  });
+};
+
 exports.addFavorite = (userId, image, gameCode, artists, inspirations, thumbnail) => {
   return queue(() => {
     const data = readUsers();

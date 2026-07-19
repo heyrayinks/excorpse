@@ -194,6 +194,27 @@ exports.handleUpdatePassword = async (userId, body) => {
   return account.updatePassword(userId, passwordHash, passwordSalt);
 };
 
+// DELETE /api/account/me { password } — full account deletion, irreversible.
+// Unlike handleUpdatePassword above, this DOES require re-entering the
+// current password despite the session token already proving identity —
+// deliberately more friction than a reversible settings change warrants,
+// since deletion can't be undone (hard delete — see data.deleteUser).
+exports.handleDeleteAccount = async (userId, body) => {
+  const { password } = body;
+  if (!password) {
+    throw { status: 400, error: 'Password required' };
+  }
+  const user = data.getUserById(userId);
+  if (!user) {
+    throw { status: 404, error: 'User not found' };
+  }
+  if (!exports.verifyPassword(password, user.passwordHash, user.passwordSalt)) {
+    throw { status: 401, error: 'Incorrect password' };
+  }
+  await data.deleteUser(userId);
+  return { deleted: true };
+};
+
 // PUT /api/account/security-question — sets/replaces the recovery question
 // used by the logged-out reset-with-answer flow.
 exports.handleUpdateSecurityQuestion = async (userId, body) => {
