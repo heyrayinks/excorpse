@@ -72,7 +72,7 @@ exports.updateSecurityQuestion = (userId, question, answerHash, answerSalt) => {
 };
 
 // POST /api/account/favorites - Save a drawing to favorites
-exports.addFavorite = (userId, image, gameCode, artists, inspirations) => {
+exports.addFavorite = (userId, image, gameCode, artists, inspirations, thumbnail) => {
   // Validate image is a data URL
   if (!image || !image.startsWith('data:image/png;base64,')) {
     throw { status: 400, error: 'Image must be a base64 PNG data URL' };
@@ -83,18 +83,29 @@ exports.addFavorite = (userId, image, gameCode, artists, inspirations) => {
     throw { status: 400, error: 'Image too large' };
   }
 
-  // Validate other fields
+  // Validate other fields. A round-based game always has exactly 3
+  // sections/artists; Open Canvas is a single shared drawing with anywhere
+  // from 1-20 contributors and no inspiration words, so both arrays just
+  // need to be present rather than a fixed length.
   if (!gameCode || typeof gameCode !== 'string') {
     throw { status: 400, error: 'Game code required' };
   }
-  if (!Array.isArray(artists) || artists.length !== 3) {
-    throw { status: 400, error: 'Must have 3 artists' };
+  if (!Array.isArray(artists) || artists.length === 0) {
+    throw { status: 400, error: 'Must have at least 1 artist' };
   }
-  if (!Array.isArray(inspirations) || inspirations.length !== 3) {
-    throw { status: 400, error: 'Must have 3 inspirations' };
+  if (!Array.isArray(inspirations)) {
+    throw { status: 400, error: 'Inspirations must be an array' };
+  }
+  if (thumbnail !== undefined && thumbnail !== null) {
+    if (typeof thumbnail !== 'string' || !thumbnail.startsWith('data:image/png;base64,')) {
+      throw { status: 400, error: 'Thumbnail must be a base64 PNG data URL' };
+    }
+    if (thumbnail.length > 2 * 1024 * 1024) {
+      throw { status: 400, error: 'Thumbnail too large' };
+    }
   }
 
-  return data.addFavorite(userId, image, gameCode, artists, inspirations)
+  return data.addFavorite(userId, image, gameCode, artists, inspirations, thumbnail)
     .then(({ user }) => serializeUser(user))
     .catch(err => {
       if (err.message.includes('favorites (max limit)')) {

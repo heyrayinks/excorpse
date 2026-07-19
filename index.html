@@ -2804,6 +2804,33 @@
     }
 
     // ---------- RESULTS ----------
+    // Round-mode favorites are stitched 3-section strips (very tall/narrow —
+    // OUTPUT_W x OUTPUT_H*3). An Open Canvas favorite is a single square-ish
+    // canvas (OUTPUT_W x OUTPUT_H) that would look squat next to those in the
+    // account page's grid, so its favorite gets this separate narrow center
+    // crop (40% of the width, full height) purely for gallery-thumbnail use —
+    // the full uncropped image is still what's stored/downloaded/pinned.
+    function cropNarrowThumbnail(dataUrl) {
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+                const cropW = Math.round(img.width * 0.4);
+                const cropX = Math.round((img.width - cropW) / 2);
+                const c = document.createElement('canvas');
+                c.width = cropW;
+                c.height = img.height;
+                c.getContext('2d').drawImage(img, cropX, 0, cropW, img.height, 0, 0, cropW, img.height);
+                resolve(c.toDataURL('image/png'));
+            };
+            img.src = dataUrl;
+        });
+    }
+
+    // Saved-this-session tracker for Open Canvas favorites (separate from the
+    // round-based savedFavoriteKeys below since there's only ever one image
+    // per game here, keyed just by game code).
+    const savedOcFavoriteKeys = new Set();
+
     function renderOpenCanvasResults() {
         const g = S.game;
         const image = g.canvasImage;
@@ -2830,6 +2857,16 @@
                             📱 Share
                         </button>
                     </div>
+                    ${S.authToken && S.user ? `
+                        <button id="ocSaveFavBtn" class="mt-2 w-full px-3 py-2 bg-yellow-100 hover:bg-yellow-200 text-yellow-800 text-sm font-semibold rounded-lg"
+                            ${savedOcFavoriteKeys.has(g.code) || S.user.favoritesCount >= MAX_FAVORITES ? 'disabled' : ''}>
+                            ${savedOcFavoriteKeys.has(g.code) ? '★ Saved to Favorites' : (S.user.favoritesCount >= MAX_FAVORITES ? `☆ Favorites full (${MAX_FAVORITES}/${MAX_FAVORITES})` : '☆ Save to Favorites')}
+                        </button>
+                    ` : `
+                        <button id="ocLoginToSaveBtn" class="mt-2 w-full px-3 py-2 bg-gray-50 hover:bg-gray-100 text-gray-500 text-xs font-medium rounded-lg">
+                            Log in to save this to your favorites
+                        </button>
+                    `}
                 </div>
 
                 <div class="mt-8 space-y-3">
@@ -2857,6 +2894,41 @@
                 a.click();
             });
         });
+        const saveFavBtn = document.getElementById('ocSaveFavBtn');
+        if (saveFavBtn) {
+            saveFavBtn.addEventListener('click', async () => {
+                if (savedOcFavoriteKeys.has(g.code)) return;
+                saveFavBtn.disabled = true;
+                saveFavBtn.textContent = 'Saving...';
+                try {
+                    const thumbnail = await cropNarrowThumbnail(image);
+                    const { user } = await authApi('/account/favorites', {
+                        method: 'POST',
+                        body: JSON.stringify({ image, gameCode: g.code, artists, inspirations: [], thumbnail }),
+                    });
+                    S.user = user;
+                    savedOcFavoriteKeys.add(g.code);
+                    saveFavBtn.textContent = '★ Saved to Favorites';
+                    saveFavBtn.className = saveFavBtn.className.replace('bg-yellow-100 hover:bg-yellow-200 text-yellow-800', 'bg-yellow-400 text-yellow-900');
+                } catch (e) {
+                    saveFavBtn.disabled = false;
+                    if (e.message.includes('favorites (max limit)')) {
+                        saveFavBtn.textContent = `☆ Favorites full (${MAX_FAVORITES}/${MAX_FAVORITES})`;
+                    } else {
+                        saveFavBtn.textContent = '☆ Save to Favorites';
+                        alert('Could not save favorite: ' + e.message);
+                    }
+                }
+            });
+        }
+        const loginToSaveBtn = document.getElementById('ocLoginToSaveBtn');
+        if (loginToSaveBtn) {
+            loginToSaveBtn.addEventListener('click', () => {
+                S.returnToResults = true;
+                S.screen = 'login';
+                render();
+            });
+        }
         document.getElementById('shareBtn').addEventListener('click', () => {
             navigator.clipboard.writeText(`${location.origin}/?code=${g.code}`);
         });
@@ -3826,7 +3898,7 @@
                                 <div class="relative group">
                                     <div class="relative rounded-lg overflow-hidden border-2 border-gray-200 cursor-pointer favSelectArea transition" data-fav-id="${fav.id}" title="Tap to select for combining">
                                         <div class="favOrderBadge hidden absolute bottom-1 right-1 z-10 w-6 h-6 rounded-full bg-[#ffec06] text-black text-xs font-bold items-center justify-center shadow-lg">1</div>
-                                        <img src="${fav.image}" class="w-full pointer-events-none">
+                                        <img src="${fav.thumbnail || fav.image}" class="w-full pointer-events-none">
                                     </div>
                                     <button class="removeFavBtn absolute top-1 right-1 w-6 h-6 bg-red-500 hover:bg-red-600 text-white text-xs rounded-full opacity-0 group-hover:opacity-100 transition" data-fav-id="${fav.id}">✕</button>
                                     <button class="pinFavBtn absolute top-1 left-1 w-6 h-6 rounded-full text-xs transition ${fav.pinnedAt ? 'bg-[#ffec06] text-black opacity-100' : 'bg-black/60 hover:bg-black/80 text-white opacity-0 group-hover:opacity-100'}"
@@ -4311,7 +4383,7 @@
                             ${p.favorites.length > 0 ? p.favorites.map(fav => `
                                 <div class="relative">
                                     <div class="rounded-lg overflow-hidden border-2 border-gray-200">
-                                        <img src="${fav.image}" class="w-full">
+                                        <img src="${fav.thumbnail || fav.image}" class="w-full">
                                     </div>
                                     ${renderCommentThread(fav.comments || [], `fav:${fav.id}`, p.id)}
                                 </div>

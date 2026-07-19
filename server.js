@@ -521,7 +521,8 @@ function handleApi(req, res, url) {
             body.image,
             body.gameCode,
             body.artists,
-            body.inspirations
+            body.inspirations,
+            body.thumbnail
           );
           json(res, 201, { user });
         } catch (e) {

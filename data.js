@@ -151,7 +151,7 @@ exports.updateUser = (id, updates) => {
   });
 };
 
-exports.addFavorite = (userId, image, gameCode, artists, inspirations) => {
+exports.addFavorite = (userId, image, gameCode, artists, inspirations, thumbnail) => {
   return queue(() => {
     const data = readUsers();
     const user = data.users.find(u => u.id === userId);
@@ -164,6 +164,11 @@ exports.addFavorite = (userId, image, gameCode, artists, inspirations) => {
     const favorite = {
       id: crypto.randomUUID(),
       image,
+      // Open Canvas favorites carry a separately-cropped narrow thumbnail
+      // (full canvas isn't the tall strip shape every other favorite is) so
+      // the account page's grid stays visually consistent; round-mode
+      // favorites leave this null and just use `image` directly, unchanged.
+      thumbnail: thumbnail || null,
       gameCode,
       artists,
       inspirations,
