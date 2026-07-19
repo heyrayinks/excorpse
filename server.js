@@ -182,6 +182,9 @@ function publicState(game, playerId) {
     section, // what everyone is drawing this round
     roundStartedAt: game.roundStartedAt || null,
     theme: game.theme || null, // opencanvas only: shared suggestion, same for every player
+    // passthrough/opencanvas only: does the creator currently allow any of
+    // their friends to join without the code/link (see openGamesForFriend()).
+    openToFriends: !!game.openToFriends,
     players: game.players.map(p => ({
       name: p.name,
       order: p.order,
@@ -265,6 +268,35 @@ function myActiveGames(userId, excludeCode) {
       // Every other artist currently on this chain, in join order — lets the
       // "Open games" list show who's actually joined once someone accepts.
       otherArtists: game.players.filter(p => p.id !== player.id).map(p => p.name),
+    });
+  }
+  return result;
+}
+
+// GET /api/friends/open-games — every active passthrough/opencanvas game
+// where the creator has flipped "let any friend join" on and the requester
+// is actually one of their friends. Relaxed/Timed never show up here — they
+// can't accept a player after /start at all, regardless of this flag.
+function openGamesForFriend(userId) {
+  const result = [];
+  for (const [code, game] of games) {
+    if (game.status !== 'active' || !game.openToFriends) continue;
+    if (game.mode !== 'passthrough' && game.mode !== 'opencanvas') continue;
+    // Same relaxed ceiling as the /join handler — an active Open Canvas
+    // game's original maxPlayers isn't a hard cap, only passthrough's is.
+    const joinCap = game.mode === 'opencanvas' ? 20 : game.maxPlayers;
+    if (game.players.length >= joinCap) continue;
+    if (game.players.some(p => p.userId === userId)) continue; // already in it
+
+    const creator = game.players[0];
+    if (!creator.userId || !data.areFriends(userId, creator.userId)) continue;
+
+    result.push({
+      code,
+      mode: game.mode,
+      creatorName: creator.name,
+      playerCount: game.players.length,
+      maxPlayers: game.maxPlayers,
     });
   }
   return result;
@@ -773,6 +805,20 @@ function handleApi(req, res, url) {
     }
   }
 
+  // GET /api/friends/open-games — active passthrough/opencanvas games where
+  // a friend has flipped "let any friend join" on. Distinct from the
+  // targeted invite list below (/api/friends/invites) — this is discovery,
+  // not a per-person invite the creator sent.
+  if (url.pathname === '/api/friends/open-games' && req.method === 'GET') {
+    try {
+      const userId = auth.extractAndVerifyToken(req);
+      return json(res, 200, { games: openGamesForFriend(userId) });
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.error || e.message });
+    }
+  }
+
   if (url.pathname === '/api/friends/invites' && req.method === 'GET') {
     try {
       const userId = auth.extractAndVerifyToken(req);
@@ -881,12 +927,16 @@ function handleApi(req, res, url) {
         strokes: [], // opencanvas only: ordered draw-op log, replayed to late joiners over the WebSocket room
         finalImage: null, // opencanvas only: flattened PNG set by /finish
         theme: null, // opencanvas only: shared suggestion word, picked once at /start
+        // passthrough/opencanvas only: creator-toggled, lets any of their
+        // friends join an active game without needing the code/link — see
+        // openGamesForFriend() and the /open-to-friends route below.
+        openToFriends: false,
       });
       json(res, 201, { code });
     });
   }
 
-  const match = url.pathname.match(/^\/api\/games\/([A-Z0-9]{6})(?:\/(join|start|submit|invite|cancel|finish))?$/i);
+  const match = url.pathname.match(/^\/api\/games\/([A-Z0-9]{6})(?:\/(join|start|submit|invite|cancel|finish|open-to-friends))?$/i);
   if (!match) return json(res, 404, { error: 'Not found' });
 
   const code = match[1].toUpperCase();
@@ -904,16 +954,28 @@ function handleApi(req, res, url) {
   if (req.method === 'POST' && action === 'join') {
     return readBody(req, 10_000, (err, body) => {
       if (err) return json(res, 400, { error: err.message });
+      // set only if the joiner happens to be logged in; anonymous play is unaffected
+      const joinerUserId = auth.tryExtractUserId(req);
+
       // 'passthrough' games stay joinable one at a time as the chain progresses,
       // instead of requiring everyone up front before a 'waiting' lobby closes.
-      const canJoinActive = game.mode === 'passthrough' && game.status === 'active';
+      // 'opencanvas' is the same — anyone with the code/link can join a live
+      // canvas, no reason a shared link shouldn't just work. The
+      // openToFriends toggle is a separate, additive thing: it's about
+      // *discovery* (showing up on a friend's home screen with no link
+      // needed at all), not about gatekeeping the link itself.
+      const canJoinActive = game.status === 'active' && (game.mode === 'passthrough' || game.mode === 'opencanvas');
       if (game.status !== 'waiting' && !canJoinActive) return json(res, 409, { error: 'Game already started' });
-      if (game.players.length >= game.maxPlayers) return json(res, 409, { error: 'Game is full' });
+      // Open Canvas's maxPlayers is really just "how many were expected at
+      // Start" (can be as low as 1 for a solo/open-headcount start), not a
+      // structural cap the way passthrough's fixed 2-3 person rotation is —
+      // a live canvas has no real reason to stop accepting new artists once
+      // running, so active joins check against the app-wide ceiling instead.
+      const joinCap = (game.mode === 'opencanvas' && game.status === 'active') ? 20 : game.maxPlayers;
+      if (game.players.length >= joinCap) return json(res, 409, { error: 'Game is full' });
       const name = String(body.name || '').trim().slice(0, 30);
       if (!name) return json(res, 400, { error: 'Name is required' });
 
-      // set only if the joiner happens to be logged in; anonymous play is unaffected
-      const joinerUserId = auth.tryExtractUserId(req);
       const player = addPlayerToGame(game, name, joinerUserId, body.emoji);
       game.lastActivityAt = Date.now();
 
@@ -1088,6 +1150,27 @@ function handleApi(req, res, url) {
       game.completedAt = Date.now();
       data.recordGamesPlayedTogether(game.players.map(p => p.userId)).catch(() => {});
       broadcastToRoom(code, null, { type: 'finished' });
+      json(res, 200, publicState(game, body.playerId));
+    });
+  }
+
+  // PUT /api/games/:code/open-to-friends { playerId, open } (creator only)
+  // — passthrough/opencanvas only. Lets any of the creator's friends join
+  // an active game without the code/link (see openGamesForFriend()); an
+  // additive path for passthrough (which already allows link-based joins
+  // while active), the only path at all for opencanvas (which otherwise
+  // blocks joining once active).
+  if (req.method === 'PUT' && action === 'open-to-friends') {
+    return readBody(req, 10_000, (err, body) => {
+      if (err) return json(res, 400, { error: err.message });
+      if (game.mode !== 'passthrough' && game.mode !== 'opencanvas') {
+        return json(res, 400, { error: 'Not available for this game mode' });
+      }
+      const player = game.players.find(p => p.id === body.playerId);
+      if (!player || player.order !== 1) return json(res, 403, { error: 'Only the game creator can change this' });
+      if (game.status !== 'active') return json(res, 409, { error: 'Game is not active' });
+
+      game.openToFriends = !!body.open;
       json(res, 200, publicState(game, body.playerId));
     });
   }
