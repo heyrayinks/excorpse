@@ -5,6 +5,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { WebSocketServer } = require('ws');
 const auth = require('./auth.js');
 const payments = require('./payments.js');
 const account = require('./account.js');
@@ -45,6 +46,23 @@ function creditFromFilename(filename) {
 // ===== In-memory game store =====
 const games = new Map();
 
+// ===== Open Canvas WebSocket rooms =====
+// code -> Set<ws>, one room per game. Lives alongside `games` and is wiped
+// the same way (nothing to persist — a deploy already drops in-progress
+// games, so dropping live connections too is consistent, not a new gap).
+const wsRooms = new Map();
+
+function broadcastToRoom(code, senderWs, payload) {
+  const room = wsRooms.get(code);
+  if (!room) return;
+  const data = JSON.stringify(payload);
+  for (const client of room) {
+    if (client !== senderWs && client.readyState === 1 /* OPEN */) {
+      client.send(data);
+    }
+  }
+}
+
 // Clean up stale games. 'passthrough' games are designed to sit idle between
 // turns for days while a link gets passed along, so they get a much longer
 // cutoff based on last activity rather than the normal 24h-since-created rule.
@@ -73,6 +91,37 @@ function generateCode() {
   return code;
 }
 
+// Vivid, easy-to-spot-on-white colors for Open Canvas live cursors. Shuffled
+// once per game (see shuffledCursorPalette) so assignment order is
+// unpredictable but collision-free within a single game, up to 10 players —
+// beyond that it cycles and colors repeat, an acceptable edge case.
+const CURSOR_PALETTE = ['#ff00ff', '#00e5ff', '#ff8f00', '#00c853', '#ffd600', '#ff1744', '#7c4dff', '#1de9b6', '#ff4081', '#76ff03'];
+function shuffledCursorPalette() {
+  const arr = CURSOR_PALETTE.slice();
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(i + 1);
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+// Open Canvas theme suggestion — picked once server-side (not client-side
+// like the round modes' per-player inspiration word) specifically so every
+// player sees the same word, since they're all drawing on the one canvas
+// together rather than separate private sheets.
+const THEME_WORDS = [
+  'robot', 'pirate', 'wizard', 'octopus', 'dragon', 'cactus', 'astronaut', 'vampire',
+  'jellyfish', 'viking', 'mermaid', 'dinosaur', 'clown', 'ninja', 'snail', 'owl',
+  'walrus', 'gnome', 'yeti', 'cyborg', 'samurai', 'scarecrow', 'ghost', 'alien',
+  'moose', 'flamingo', 'chicken', 'toad', 'spider', 'king', 'queen', 'jester',
+  'detective', 'chef', 'cowboy', 'zombie', 'angel', 'fairy', 'troll', 'goblin',
+  'knight', 'pharaoh', 'underwater city', 'floating island', 'tiny circus',
+  'haunted carnival', 'secret garden', 'lost civilization', 'space market',
+];
+function randomTheme() {
+  return THEME_WORDS[crypto.randomInt(THEME_WORDS.length)];
+}
+
 // Shared by the anonymous /join handler and the friend-invite accept handler.
 function addPlayerToGame(game, name, userId, emoji) {
   const player = {
@@ -84,6 +133,7 @@ function addPlayerToGame(game, name, userId, emoji) {
     // Freeform, not validated against an allowlist — worst case someone sees a
     // couple of stray characters next to their name in the lobby, no real harm.
     emoji: emoji ? String(emoji).trim().slice(0, 8) : null,
+    cursorColor: game.cursorPalette[game.players.length % game.cursorPalette.length],
   };
   game.players.push(player);
   return player;
@@ -131,10 +181,12 @@ function publicState(game, playerId) {
     round,
     section, // what everyone is drawing this round
     roundStartedAt: game.roundStartedAt || null,
+    theme: game.theme || null, // opencanvas only: shared suggestion, same for every player
     players: game.players.map(p => ({
       name: p.name,
       order: p.order,
       ...playerIcon(p),
+      cursorColor: p.cursorColor || null,
       submitted: round ? !!p.submissions[round] : false,
     })),
     you: null,
@@ -145,6 +197,7 @@ function publicState(game, playerId) {
       name: player.name,
       order: player.order,
       ...playerIcon(player),
+      cursorColor: player.cursorColor || null,
       submitted: round ? !!player.submissions[round] : false,
     };
 
@@ -159,17 +212,22 @@ function publicState(game, playerId) {
     }
   }
 
-  // Full reveal only when completed: one sheet per player, each with head/torso/legs
+  // Full reveal only when completed: one sheet per player, each with head/torso/legs.
+  // Open Canvas has no rounds/sheets — just the one shared, final flattened image.
   if (game.status === 'completed') {
-    state.sheets = game.sheets.map((sheet, i) => ({
-      sheet: i + 1,
-      sections: SECTIONS.map(sec => ({
-        section: sec,
-        image: sheet[sec] ? sheet[sec].image : null,
-        artist: sheet[sec] ? sheet[sec].artist : null,
-        inspiration: sheet[sec] ? sheet[sec].inspiration : null,
-      })),
-    }));
+    if (game.mode === 'opencanvas') {
+      state.canvasImage = game.finalImage || null;
+    } else {
+      state.sheets = game.sheets.map((sheet, i) => ({
+        sheet: i + 1,
+        sections: SECTIONS.map(sec => ({
+          section: sec,
+          image: sheet[sec] ? sheet[sec].image : null,
+          artist: sheet[sec] ? sheet[sec].artist : null,
+          inspiration: sheet[sec] ? sheet[sec].inspiration : null,
+        })),
+      }));
+    }
   }
 
   return state;
@@ -758,7 +816,7 @@ function handleApi(req, res, url) {
   if (req.method === 'POST' && url.pathname === '/api/games') {
     return readBody(req, 10_000, (err, body) => {
       if (err) return json(res, 400, { error: err.message });
-      const mode = body.mode === 'timed' ? 'timed' : body.mode === 'passthrough' ? 'passthrough' : 'async';
+      const mode = body.mode === 'timed' ? 'timed' : body.mode === 'passthrough' ? 'passthrough' : body.mode === 'opencanvas' ? 'opencanvas' : 'async';
       const timePerTurn = mode === 'timed' ? Math.min(10, Math.max(1, Number(body.timePerTurn) || 3)) : null;
       // Open headcount: the creator doesn't commit to an exact roster up front —
       // anyone with the link can join (up to the same 20-player ceiling as a
@@ -789,12 +847,16 @@ function handleApi(req, res, url) {
         roundStartedAt: null,
         createdAt: now,
         lastActivityAt: now,
+        cursorPalette: shuffledCursorPalette(),
+        strokes: [], // opencanvas only: ordered draw-op log, replayed to late joiners over the WebSocket room
+        finalImage: null, // opencanvas only: flattened PNG set by /finish
+        theme: null, // opencanvas only: shared suggestion word, picked once at /start
       });
       json(res, 201, { code });
     });
   }
 
-  const match = url.pathname.match(/^\/api\/games\/([A-Z0-9]{6})(?:\/(join|start|submit|invite|cancel))?$/i);
+  const match = url.pathname.match(/^\/api\/games\/([A-Z0-9]{6})(?:\/(join|start|submit|invite|cancel|finish))?$/i);
   if (!match) return json(res, 404, { error: 'Not found' });
 
   const code = match[1].toUpperCase();
@@ -866,8 +928,16 @@ function handleApi(req, res, url) {
         return json(res, 409, { error: `Need ${game.maxPlayers} players to start` });
       }
       game.status = 'active';
-      game.round = 1;
-      game.roundStartedAt = Date.now();
+      // Open Canvas has no rounds — everyone draws on the one shared sheet
+      // until someone hits Finish, so there's no round/section to initialize.
+      if (game.mode === 'opencanvas') {
+        game.round = null;
+        game.roundStartedAt = null;
+        game.theme = randomTheme();
+      } else {
+        game.round = 1;
+        game.roundStartedAt = Date.now();
+      }
       json(res, 200, publicState(game, body.playerId));
     });
   }
@@ -969,6 +1039,35 @@ function handleApi(req, res, url) {
     });
   }
 
+  // POST /api/games/:code/finish { playerId, image } — Open Canvas only.
+  // Same creator-only pattern as /start: only the player who created the
+  // game can end it for everyone. The finisher's client sends its own
+  // current flattened canvas as the authoritative result; other clients may
+  // be a network round-trip behind, an acceptable trade-off for not needing
+  // a server-side canvas renderer.
+  if (req.method === 'POST' && action === 'finish') {
+    return readBody(req, 8_000_000, (err, body) => {
+      if (err) return json(res, 400, { error: err.message });
+      if (game.mode !== 'opencanvas') return json(res, 400, { error: 'Not an Open Canvas game' });
+      if (game.status !== 'active') return json(res, 409, { error: 'Game is not active' });
+      const player = game.players.find(p => p.id === body.playerId);
+      if (!player) return json(res, 403, { error: 'Unknown player' });
+      if (player.order !== 1) return json(res, 403, { error: 'Only the game creator can finish' });
+
+      const image = String(body.image || '');
+      if (!image.startsWith('data:image/png;base64,')) {
+        return json(res, 400, { error: 'Invalid image' });
+      }
+
+      game.finalImage = image;
+      game.status = 'completed';
+      game.completedAt = Date.now();
+      data.recordGamesPlayedTogether(game.players.map(p => p.userId)).catch(() => {});
+      broadcastToRoom(code, null, { type: 'finished' });
+      json(res, 200, publicState(game, body.playerId));
+    });
+  }
+
   return json(res, 405, { error: 'Method not allowed' });
 }
 
@@ -1026,6 +1125,79 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { 'Content-Type': contentType });
       res.end(data);
     }
+  });
+});
+
+// ===== Open Canvas WebSocket =====
+// A raw upgrade handled outside the /api HTTP routes — real-time stroke
+// broadcast for the shared-whiteboard mode. Everything else in this app is
+// 2s-poll based, which is fine for turn state but too slow for "show my line
+// the instant I draw it" with several people drawing at once.
+const wss = new WebSocketServer({ noServer: true, maxPayload: 20_000 });
+
+// Caps memory for a runaway/abusive client — not a real ceiling for normal use.
+const MAX_STROKE_HISTORY = 20_000;
+
+wss.on('connection', (ws, code, player) => {
+  ws.gameCode = code;
+  // Broadcasts are tagged with the player's public `order`, never their
+  // internal id — that id doubles as an auth token for /submit, /cancel,
+  // /finish etc. (any player who knew it could act as another player), so it
+  // must never be sent to other clients in the room.
+  ws.order = player.order;
+  let room = wsRooms.get(code);
+  if (!room) { room = new Set(); wsRooms.set(code, room); }
+  room.add(ws);
+
+  // Replay everything drawn so far so a late joiner's canvas matches
+  // everyone else's before live strokes start streaming in.
+  const game = games.get(code);
+  if (game) {
+    try { ws.send(JSON.stringify({ type: 'history', strokes: game.strokes })); } catch (e) { /* connection already gone */ }
+  }
+
+  ws.on('message', raw => {
+    let msg;
+    try { msg = JSON.parse(raw); } catch (e) { return; }
+    if (!msg || typeof msg.type !== 'string') return;
+    const g = games.get(code);
+    if (!g || g.status !== 'active') return;
+
+    if (msg.type === 'stroke' || msg.type === 'fill' || msg.type === 'airbrush') {
+      // Persisted (unlike cursor position) so a late joiner's replay
+      // reconstructs the same canvas everyone else is looking at.
+      if (g.strokes.length < MAX_STROKE_HISTORY) {
+        g.strokes.push({ ...msg, order: ws.order });
+      }
+      g.lastActivityAt = Date.now();
+      broadcastToRoom(code, ws, { ...msg, order: ws.order });
+    } else if (msg.type === 'cursor') {
+      broadcastToRoom(code, ws, { type: 'cursor', order: ws.order, x: msg.x, y: msg.y });
+    }
+  });
+
+  ws.on('close', () => {
+    room.delete(ws);
+    if (room.size === 0) wsRooms.delete(code);
+    broadcastToRoom(code, ws, { type: 'presence', order: ws.order, connected: false });
+  });
+});
+
+server.on('upgrade', (req, socket, head) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  if (url.pathname !== '/ws/canvas') { socket.destroy(); return; }
+
+  const code = (url.searchParams.get('code') || '').toUpperCase();
+  const playerId = url.searchParams.get('playerId') || '';
+  const game = games.get(code);
+  const player = game && game.players.find(p => p.id === playerId);
+  if (!game || game.mode !== 'opencanvas' || !player) {
+    socket.destroy();
+    return;
+  }
+
+  wss.handleUpgrade(req, socket, head, ws => {
+    wss.emit('connection', ws, code, player);
   });
 });
 

@@ -282,6 +282,39 @@
         return e.message === 'Game is full' || e.message === 'Game already started';
     }
 
+    // Same overlay-appended-to-body pattern as showConfirmModal/showEmojiPicker
+    // — a code + copyable link, used by Open Canvas's in-game Share button.
+    function showShareGameModal(code) {
+        const overlay = document.createElement('div');
+        overlay.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4';
+        overlay.innerHTML = `
+            <div class="bg-white rounded-2xl p-8 max-w-sm w-full text-center shadow-2xl">
+                <div class="text-5xl mb-3">🔗</div>
+                <p class="text-gray-700 font-semibold mb-4">Share this game</p>
+                <div class="p-5 bg-[#fffce8] rounded-xl border-2 border-[#ffec06] mb-4">
+                    <p class="text-sm text-gray-600 mb-1">Game Code</p>
+                    <p class="text-3xl font-mono font-bold text-gray-900 tracking-widest">${code}</p>
+                </div>
+                <div class="flex gap-2 mb-4">
+                    <button class="shareModalCopyCodeBtn flex-1 px-4 py-2 bg-[#ffec06] hover:bg-[#e6d405] text-black text-sm font-semibold rounded-lg transition-transform">📋 Copy code</button>
+                    <button class="shareModalCopyLinkBtn flex-1 px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold rounded-lg transition-transform">🔗 Copy invite link</button>
+                </div>
+                <button class="shareModalCloseBtn w-full px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl">Close</button>
+            </div>`;
+        document.body.appendChild(overlay);
+        const close = () => overlay.remove();
+        overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+        overlay.querySelector('.shareModalCloseBtn').addEventListener('click', close);
+        overlay.querySelector('.shareModalCopyCodeBtn').addEventListener('click', e => {
+            navigator.clipboard.writeText(code);
+            flashCopied(e.currentTarget);
+        });
+        overlay.querySelector('.shareModalCopyLinkBtn').addEventListener('click', e => {
+            navigator.clipboard.writeText(`${location.origin}/?code=${code}`);
+            flashCopied(e.currentTarget);
+        });
+    }
+
     // Letter-paper proportions (8.5 x 11). Free tier DRAWS at 100 DPI (850x1100)
     // — same live experience as always, no perf/UX change. Paid accounts draw
     // natively at 300 DPI (2550x3300). Resolution is fixed at draw-time per
@@ -406,10 +439,15 @@
         } else if (data.status === 'completed') {
             S.screen = 'results';
         } else if (data.status === 'active') {
-            S.screen = 'draw';
-            S.lastRound = data.round;
-            S.submittedThisRound = data.you ? data.you.submitted : false;
-            resetDrawingTools();
+            if (data.mode === 'opencanvas') {
+                S.screen = 'canvas';
+                resetDrawingTools();
+            } else {
+                S.screen = 'draw';
+                S.lastRound = data.round;
+                S.submittedThisRound = data.you ? data.you.submitted : false;
+                resetDrawingTools();
+            }
         }
     }
 
@@ -532,7 +570,7 @@
     // e.g. a premium player who wandered off to their profile while a
     // 'passthrough' game sits waiting — polling keeps S.game fresh and still
     // fires notifications, but never yanks the screen out from under them.
-    const GAME_ACTIVE_SCREENS = new Set(['lobby', 'draw', 'results']);
+    const GAME_ACTIVE_SCREENS = new Set(['lobby', 'draw', 'canvas', 'results']);
 
     function onStateUpdate(prev, cur) {
         const inGameFlow = GAME_ACTIVE_SCREENS.has(S.screen);
@@ -541,6 +579,18 @@
             if (!inGameFlow) return;
             if (S.screen !== 'lobby') { S.screen = 'lobby'; render(); }
             else updateLobby(cur);
+        } else if (cur.status === 'active' && cur.mode === 'opencanvas') {
+            // No rounds to diff — this poll only exists to catch the initial
+            // waiting->active transition and keep the player roster fresh.
+            // The canvas's actual pixels are driven entirely by the WebSocket.
+            if (!inGameFlow) return;
+            if (S.screen !== 'canvas') {
+                S.screen = 'canvas';
+                resetDrawingTools();
+                render();
+            } else {
+                updateCanvasPlayerList(cur);
+            }
         } else if (cur.status === 'active') {
             const roundChanged = S.lastRound !== cur.round;
             if (roundChanged) {
@@ -574,6 +624,7 @@
             }
         } else if (cur.status === 'completed') {
             stopPolling();
+            disconnectCanvasSocket();
             if (inGameFlow && S.screen !== 'results') {
                 S.screen = 'results';
                 render();
@@ -692,6 +743,7 @@
         if (S.screen === 'home') renderHome();
         else if (S.screen === 'lobby') renderLobby();
         else if (S.screen === 'draw') renderDraw();
+        else if (S.screen === 'canvas') renderCanvasMode();
         else if (S.screen === 'results') renderResults();
         else if (S.screen === 'signup') renderSignup();
         else if (S.screen === 'login') renderLogin();
@@ -802,6 +854,13 @@
                                     <p class="text-xs text-gray-600">No lobby, no waiting online together. Draw your part now, hand the link off whenever you're ready.</p>
                                 </div>
                             </label>
+                            <label class="flex items-center p-3 border-2 border-gray-200 rounded-lg cursor-pointer" id="modeOpenCanvasLabel">
+                                <input type="radio" name="mode" value="opencanvas" class="w-4 h-4">
+                                <div class="ml-3">
+                                    <p class="font-semibold text-gray-900 text-sm">Open Canvas</p>
+                                    <p class="text-xs text-gray-600">Everyone draws on one shared canvas together, live — no rounds, no rotation.</p>
+                                </div>
+                            </label>
                         </div>
                         <div id="timerOption" class="hidden mb-3 p-3 bg-orange-50 rounded-lg border-l-4 border-orange-400">
                             <label class="block text-sm text-gray-700 mb-1">Time per round: <b><span id="timerValue">3</span> min</b></label>
@@ -839,7 +898,7 @@
             });
         }
 
-        const modeLabels = { async: 'modeAsyncLabel', timed: 'modeTimedLabel', passthrough: 'modePassthroughLabel' };
+        const modeLabels = { async: 'modeAsyncLabel', timed: 'modeTimedLabel', passthrough: 'modePassthroughLabel', opencanvas: 'modeOpenCanvasLabel' };
         // Slider value '1' is the "?" open-headcount step, below the real
         // minimum of 2 — only meaningful for non-passthrough modes.
         function playerCountLabel(n) { return n === '1' ? '?' : n; }
@@ -851,6 +910,8 @@
                 hint.textContent = n === '2'
                     ? 'Each of you draws a head on your own sheet, then you swap for the torso, then swap back for the legs — no need to be online at the same time.'
                     : 'Each of you draws a head on your own sheet, then sheets rotate for the torso and legs — no need to be online at the same time.';
+            } else if (mode === 'opencanvas') {
+                hint.textContent = 'Everyone draws on the same canvas at the same time — see each other\'s cursors and strokes live. Anyone can finish it for the group.';
             } else {
                 hint.textContent = n === '2'
                     ? 'With 2 players, your sheets simply swap back and forth each round.'
@@ -1747,6 +1808,692 @@
         ctx.putImageData(img, 0, 0);
     }
 
+    // ---------- OPEN CANVAS (shared live whiteboard) ----------
+    // A separate, self-contained drawing engine rather than threading mode
+    // checks through setupCanvas() above — that function is round-based and
+    // tightly tuned (taper, palm rejection, airbrush rAF loop); duplicating
+    // the handful of paint primitives here keeps this new mode from risking
+    // any regression in the proven per-round drawing experience. Unlike
+    // setupCanvas's drawSegment (which reads S.tool/S.brushColor/S.activeLayer
+    // ambiently), every function below takes its tool/color/ctx explicitly —
+    // the same code paints both the local player's live strokes and remote
+    // players' replayed ones.
+    function ocStrokeTaperedSegment(ctx, from, to, fromWidth, toWidth) {
+        const dx = to.x - from.x, dy = to.y - from.y;
+        const dist = Math.hypot(dx, dy);
+        const maxWidth = Math.max(fromWidth, toWidth, 1);
+        const step = Math.max(1, maxWidth * 0.5);
+        const steps = Math.max(1, Math.ceil(dist / step));
+        let px = from.x, py = from.y;
+        for (let i = 1; i <= steps; i++) {
+            const t = i / steps;
+            const x = from.x + dx * t;
+            const y = from.y + dy * t;
+            ctx.lineWidth = fromWidth + (toWidth - fromWidth) * t;
+            ctx.beginPath();
+            ctx.moveTo(px, py);
+            ctx.lineTo(x, y);
+            ctx.stroke();
+            px = x; py = y;
+        }
+    }
+
+    function ocDrawGrainySegment(ctx, color, from, to, width) {
+        const dx = to.x - from.x, dy = to.y - from.y;
+        const dist = Math.hypot(dx, dy) || 0.01;
+        const r = Math.max(1, width) / 2;
+        const step = Math.max(1, r * 0.7);
+        const steps = Math.max(1, Math.ceil(dist / step));
+        const fr = parseInt(color.slice(1, 3), 16);
+        const fg = parseInt(color.slice(3, 5), 16);
+        const fb = parseInt(color.slice(5, 7), 16);
+        for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const cx = from.x + dx * t;
+            const cy = from.y + dy * t;
+            for (let s = 0; s < 3; s++) {
+                const angle = Math.random() * Math.PI * 2;
+                const rad = Math.random() * r;
+                const px = cx + Math.cos(angle) * rad;
+                const py = cy + Math.sin(angle) * rad;
+                const alpha = 0.12 + Math.random() * 0.28;
+                const size = Math.max(0.4, r * (0.15 + Math.random() * 0.35));
+                ctx.beginPath();
+                ctx.fillStyle = `rgba(${fr}, ${fg}, ${fb}, ${alpha})`;
+                ctx.arc(px, py, size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+    }
+
+    function ocDrawSegment(ctx, tool, color, from, to, fromWidth, toWidth) {
+        ctx.globalCompositeOperation = tool === 'eraser' ? 'destination-out' : 'source-over';
+        if (tool === 'pencil') {
+            ocDrawGrainySegment(ctx, color, from, to, (fromWidth + toWidth) / 2);
+            return;
+        }
+        ctx.strokeStyle = color;
+        ocStrokeTaperedSegment(ctx, from, to, fromWidth, toWidth);
+    }
+
+    // Mirrors setupCanvas's finishBrushTaper: erases the live-drawn tail and
+    // redraws it narrowing to a point, so a lifted brush stroke doesn't end
+    // in a blunt cap. `tail` is the last few {x,y,width} points of the stroke.
+    function ocFinishBrushTaper(ctx, color, tail) {
+        if (!tail || tail.length < 2) return;
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.lineCap = 'round';
+        for (let i = 1; i < tail.length; i++) {
+            ocStrokeTaperedSegment(ctx, tail[i - 1], tail[i], tail[i - 1].width + 3, tail[i].width + 3);
+        }
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.strokeStyle = color;
+        const taperedWidths = tail.map((pt, i) => {
+            const taper = 1 - i / (tail.length - 1);
+            return Math.max(0.3, pt.width * (0.08 + taper * 0.92));
+        });
+        for (let i = 1; i < tail.length; i++) {
+            ocStrokeTaperedSegment(ctx, tail[i - 1], tail[i], taperedWidths[i - 1], taperedWidths[i]);
+        }
+    }
+
+    // One frame's worth of airbrush specks — called on every local rAF tick
+    // while spraying, and once per throttled 'airbrush' network message when
+    // replaying a remote player's spray (or history).
+    function ocStampAirbrushFrame(ctx, color, radius, target, pressure) {
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.fillStyle = color;
+        const specksThisFrame = Math.round(20 + pressure * 70);
+        const spreadRadius = radius * (1.6 - pressure * 0.7);
+        const baseOpacity = 0.3 + pressure * 0.4;
+        for (let i = 0; i < specksThisFrame; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const dist = Math.pow(Math.random(), 2.2) * spreadRadius;
+            const x = target.x + Math.cos(angle) * dist;
+            const y = target.y + Math.sin(angle) * dist;
+            const speckRadius = Math.max(0.3, radius * (0.01 + Math.pow(Math.random(), 4) * 0.05));
+            ctx.globalAlpha = baseOpacity * (0.5 + Math.random() * 0.5);
+            ctx.beginPath();
+            ctx.arc(x, y, speckRadius, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        if (Math.random() < 0.04) {
+            const angle = Math.random() * Math.PI * 2;
+            const dist = Math.pow(Math.random(), 1.5) * spreadRadius * 1.2;
+            const x = target.x + Math.cos(angle) * dist;
+            const y = target.y + Math.sin(angle) * dist;
+            ctx.globalAlpha = 0.7 + Math.random() * 0.3;
+            ctx.beginPath();
+            ctx.arc(x, y, radius * (0.05 + Math.random() * 0.07), 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+    }
+
+    // ---- Networking: connect, dispatch, and apply remote draw ops ----
+    let ocSocket = null;
+    let ocCtxs = null; // [bottomCtx, topCtx], set by setupOpenCanvasDrawing while the canvas screen is live
+    let ocReconnectTimer = null;
+    const ocRemoteStrokeState = new Map(); // player order -> { last:{x,y}, lastWidth }
+    const ocCursorEls = new Map();          // player order -> cursor DOM element
+
+    function ocSend(msg) {
+        if (ocSocket && ocSocket.readyState === WebSocket.OPEN) {
+            ocSocket.send(JSON.stringify(msg));
+        }
+    }
+
+    function ocPlayerByOrder(order) {
+        return (S.game && S.game.players || []).find(p => p.order === order);
+    }
+
+    function applyRemoteDrawOp(op) {
+        if (!ocCtxs) return;
+        const ctx = ocCtxs[op.layer === 0 ? 0 : 1];
+        if (op.type === 'fill') {
+            floodFill(ctx, Math.round(op.x), Math.round(op.y), op.color);
+        } else if (op.type === 'airbrush') {
+            ocStampAirbrushFrame(ctx, op.color, op.radius, { x: op.x, y: op.y }, op.pressure);
+        } else if (op.type === 'stroke') {
+            const key = op.order;
+            if (op.phase === 'down') {
+                ocRemoteStrokeState.set(key, { last: { x: op.x, y: op.y }, lastWidth: op.width });
+                ocDrawSegment(ctx, op.tool, op.color, { x: op.x, y: op.y }, { x: op.x + 0.01, y: op.y + 0.01 }, op.width, op.width);
+            } else if (op.phase === 'move' && op.points && op.points.length) {
+                let st = ocRemoteStrokeState.get(key);
+                if (!st) {
+                    st = { last: { x: op.points[0].x, y: op.points[0].y }, lastWidth: op.points[0].width };
+                    ocRemoteStrokeState.set(key, st);
+                }
+                for (const pt of op.points) {
+                    ocDrawSegment(ctx, op.tool, op.color, st.last, { x: pt.x, y: pt.y }, st.lastWidth, pt.width);
+                    st.last = { x: pt.x, y: pt.y };
+                    st.lastWidth = pt.width;
+                }
+            } else if (op.phase === 'up') {
+                if (op.tool === 'brush' && op.tail) ocFinishBrushTaper(ctx, op.color, op.tail);
+                ocRemoteStrokeState.delete(key);
+            }
+        }
+    }
+
+    function ocRemoveCursor(order) {
+        const el = ocCursorEls.get(order);
+        if (el) { el.remove(); ocCursorEls.delete(order); }
+    }
+
+    // Positions a colored crosshair over the canvas for a remote player's
+    // pointer, converting canvas-pixel coordinates to the canvas's current
+    // on-screen CSS size (same scale fitPaper() applies to the canvases
+    // themselves, so the dot lands exactly where their pointer is).
+    function ocUpdateCursor(order, x, y) {
+        const layer = document.getElementById('ocCursorLayer');
+        const stack = document.getElementById('canvasStack');
+        if (!layer || !stack) return;
+        const player = ocPlayerByOrder(order);
+        if (!player) return;
+
+        let el = ocCursorEls.get(order);
+        if (!el) {
+            el = document.createElement('div');
+            el.style.cssText = 'position:absolute; width:22px; height:22px; margin-left:-11px; margin-top:-11px; pointer-events:none; transition:left 60ms linear, top 60ms linear;';
+            el.innerHTML = `
+                <svg width="22" height="22" viewBox="0 0 22 22" style="overflow:visible">
+                    <line x1="11" y1="0" x2="11" y2="7" stroke="${player.cursorColor}" stroke-width="2"/>
+                    <line x1="11" y1="15" x2="11" y2="22" stroke="${player.cursorColor}" stroke-width="2"/>
+                    <line x1="0" y1="11" x2="7" y2="11" stroke="${player.cursorColor}" stroke-width="2"/>
+                    <line x1="15" y1="11" x2="22" y2="11" stroke="${player.cursorColor}" stroke-width="2"/>
+                    <circle cx="11" cy="11" r="2.5" fill="${player.cursorColor}"/>
+                </svg>
+                <span style="position:absolute; top:22px; left:50%; transform:translateX(-50%); white-space:nowrap; font-size:10px; font-weight:700; color:#fff; background:${player.cursorColor}; padding:1px 5px; border-radius:8px;">${escapeHtml(player.name.slice(0, 12))}</span>`;
+            layer.appendChild(el);
+            ocCursorEls.set(order, el);
+        }
+        const scaleX = stack.clientWidth / CANVAS_W;
+        const scaleY = stack.clientHeight / CANVAS_H;
+        el.style.left = (x * scaleX) + 'px';
+        el.style.top = (y * scaleY) + 'px';
+    }
+
+    function connectCanvasSocket() {
+        disconnectCanvasSocket();
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const socket = new WebSocket(`${proto}//${location.host}/ws/canvas?code=${S.code}&playerId=${S.playerId}`);
+        ocSocket = socket;
+
+        socket.addEventListener('open', () => {
+            if (ocSocket !== socket) return;
+            const badge = document.getElementById('ocConnStatus');
+            if (badge) { badge.textContent = '🟢 Live'; badge.className = 'text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700'; }
+        });
+
+        socket.addEventListener('message', e => {
+            if (ocSocket !== socket) return;
+            let msg;
+            try { msg = JSON.parse(e.data); } catch (err) { return; }
+            if (msg.type === 'history') {
+                // Clears first — a reconnect replays the server's full log again,
+                // and drawing it on top of what's already there would double
+                // every stroke instead of just resyncing to the canonical state.
+                if (ocCtxs) {
+                    ocCtxs[0].clearRect(0, 0, CANVAS_W, CANVAS_H);
+                    ocCtxs[1].clearRect(0, 0, CANVAS_W, CANVAS_H);
+                }
+                ocRemoteStrokeState.clear();
+                (msg.strokes || []).forEach(applyRemoteDrawOp);
+            } else if (msg.type === 'cursor') {
+                if (msg.order !== (S.game.you && S.game.you.order)) ocUpdateCursor(msg.order, msg.x, msg.y);
+            } else if (msg.type === 'presence' && !msg.connected) {
+                ocRemoveCursor(msg.order);
+                ocRemoteStrokeState.delete(msg.order);
+            } else if (msg.type === 'finished') {
+                pollState();
+            } else {
+                if (msg.order === (S.game.you && S.game.you.order)) return; // never re-apply our own strokes
+                applyRemoteDrawOp(msg);
+            }
+        });
+
+        const scheduleReconnect = () => {
+            if (ocSocket !== socket) return;
+            ocSocket = null;
+            const badge = document.getElementById('ocConnStatus');
+            if (badge) { badge.textContent = '🔴 Reconnecting…'; badge.className = 'text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-600'; }
+            if (S.screen === 'canvas' && S.game && S.game.status === 'active') {
+                ocReconnectTimer = setTimeout(connectCanvasSocket, 2000);
+            }
+        };
+        socket.addEventListener('close', scheduleReconnect);
+        socket.addEventListener('error', () => socket.close());
+    }
+
+    function disconnectCanvasSocket() {
+        if (ocReconnectTimer) { clearTimeout(ocReconnectTimer); ocReconnectTimer = null; }
+        if (ocSocket) { const s = ocSocket; ocSocket = null; s.close(); }
+        ocRemoteStrokeState.clear();
+        ocCursorEls.forEach(el => el.remove());
+        ocCursorEls.clear();
+    }
+
+    // Lightweight roster refresh for the canvas screen's player chip row —
+    // called on every 2s poll tick, deliberately never touches canvas pixels
+    // (those are owned entirely by the WebSocket).
+    function updateCanvasPlayerList(g) {
+        const list = document.getElementById('ocPlayerList');
+        if (!list) return;
+        list.innerHTML = g.players.map(p => `
+            <span class="text-xs px-2 py-1 rounded-full text-white font-semibold" style="background:${p.cursorColor || '#999'}" title="${escapeHtml(p.name)}">${escapeHtml(p.name.slice(0, 10))}</span>
+        `).join('');
+    }
+
+    // Briefly flashes the shared Open Canvas theme suggestion center-screen —
+    // appended to <body> (not #app) so it survives on top of the canvas and
+    // fades on its own rather than needing a dismiss click.
+    let ocFlashEl = null;
+    function flashOcTheme(theme) {
+        if (ocFlashEl) { ocFlashEl.remove(); ocFlashEl = null; }
+        const flash = document.createElement('div');
+        flash.style.cssText = 'position:fixed; top:90px; left:50%; transform:translateX(-50%); z-index:100; background:#111827; color:#fff; padding:14px 28px; border-radius:9999px; font-weight:700; font-size:18px; box-shadow:0 10px 30px rgba(0,0,0,.35); opacity:0; transition:opacity 0.4s ease; pointer-events:none; white-space:nowrap;';
+        flash.innerHTML = `💡 Suggested theme: <span class="capitalize" style="color:#ffec06">${escapeHtml(theme)}</span>`;
+        document.body.appendChild(flash);
+        ocFlashEl = flash;
+        requestAnimationFrame(() => { flash.style.opacity = '1'; });
+        setTimeout(() => {
+            flash.style.opacity = '0';
+            setTimeout(() => { flash.remove(); if (ocFlashEl === flash) ocFlashEl = null; }, 500);
+        }, 4000);
+    }
+
+    function renderCanvasMode() {
+        const g = S.game;
+        // Open Canvas always draws at the base (free-tier) resolution for
+        // every player, paid or not — it's one shared surface, so there's no
+        // meaningful per-player "print quality" the way there is for a
+        // personal sheet in the round-based modes.
+        CANVAS_W = BASE_CANVAS_W; CANVAS_H = BASE_CANVAS_H; EDGE_H = BASE_EDGE_H; RENDER_SCALE = 1;
+        const sizeCfg = sizeConfigFor(S.tool);
+
+        app.innerHTML = `
+        <div class="bg-gray-100 flex flex-col" style="height:100vh; height:100dvh; overflow:hidden">
+            <div class="flex items-center justify-between px-4 py-2 bg-white shadow-sm shrink-0 flex-wrap gap-y-2">
+                <div class="flex items-center gap-3">
+                    <span class="font-bold text-xl text-gray-900">🖌️ Open Canvas</span>
+                    <span id="ocConnStatus" class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-400">Connecting…</span>
+                    <button id="ocShareBtn" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg">🔗 Share</button>
+                </div>
+                <div class="flex items-center gap-3">
+                    <div id="ocPlayerList" class="hidden sm:flex items-center gap-1.5 flex-wrap"></div>
+                    ${g.you && g.you.order === 1
+                        ? `<button id="finishBtn" class="px-5 py-2 bg-[#ffec06] hover:bg-[#e6d405] text-black font-bold rounded-lg">🏁 Finish</button>`
+                        : `<span class="text-xs text-gray-400 italic">Only ${escapeHtml((g.players.find(p => p.order === 1) || {}).name || 'the creator')} can finish this drawing</span>`}
+                </div>
+            </div>
+
+            ${g.theme ? `
+                <div class="px-4 py-1.5 bg-yellow-50 border-t border-yellow-200 text-center shrink-0">
+                    <button id="ocThemeChip" class="text-sm font-semibold text-yellow-800 hover:text-yellow-900" title="Show the suggested theme again">
+                        💡 Suggested theme for everyone: <span class="capitalize underline decoration-dotted">${escapeHtml(g.theme)}</span>
+                    </button>
+                </div>
+            ` : ''}
+
+            <!-- Toolbar -->
+            <div class="flex items-center gap-3 px-4 py-2 bg-white border-t border-gray-100 shadow-sm shrink-0 flex-wrap">
+                <div class="relative">
+                    <button id="toolTrigger" class="px-3 py-1.5 rounded-lg border border-gray-300 text-sm font-semibold flex items-center gap-1.5" title="Drawing tool">
+                        <img id="toolTriggerIcon" src="${TOOL_META[S.tool].icon}" alt="" class="w-12 h-12 object-contain">
+                        <span id="toolTriggerLabel">${TOOL_META[S.tool].label}</span>
+                        <span class="text-gray-400 text-[10px]">▾</span>
+                    </button>
+                    <div id="toolMenu" class="hidden absolute left-0 top-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-20 overflow-hidden" style="min-width:150px">
+                        ${Object.entries(TOOL_META).filter(([, meta]) => !meta.paid || (S.authToken && S.user && S.user.paid)).map(([tool, meta]) => `
+                            <button data-tool="${tool}" class="toolMenuItem w-full text-left px-3 py-2 text-sm font-semibold hover:bg-gray-100 flex items-center gap-2 ${tool === S.tool ? 'bg-gray-100' : ''}">
+                                <img src="${meta.icon}" alt="" class="w-12 h-12 object-contain">
+                                <span>${meta.label}</span>
+                            </button>
+                        `).join('')}
+                    </div>
+                </div>
+                <span id="brushHint" class="text-xs text-amber-600 font-semibold ${S.tool === 'brush' ? '' : 'hidden'}">🖊️ stylus only</span>
+                <div class="h-6 border-l border-gray-300"></div>
+                <div class="flex items-center gap-1.5">
+                    <span class="text-xs text-gray-500 mr-0.5">Layer</span>
+                    <button id="layerBtn1" data-layer="1" class="layerBtn active px-2.5 py-1.5 rounded-lg border border-gray-300 text-sm font-semibold" title="Line art layer (top)">1</button>
+                    <button id="layerBtn0" data-layer="0" class="layerBtn px-2.5 py-1.5 rounded-lg border border-gray-300 text-sm font-semibold" title="Background layer (bottom)">2</button>
+                </div>
+                <div class="h-6 border-l border-gray-300"></div>
+                <div class="flex items-center gap-1.5" id="colorRow">
+                    ${['#000000'].map(c => `
+                        <button data-color="${c}" class="colorBtn w-7 h-7 rounded-full border-2 ${c === S.brushColor ? 'border-gray-900 scale-110' : 'border-gray-200'}" style="background:${c}"></button>
+                    `).join('')}
+                    <label class="relative w-7 h-7 rounded-full border-2 border-gray-300 overflow-hidden cursor-pointer ml-1" title="Custom color"
+                        style="background:conic-gradient(red,yellow,lime,cyan,blue,magenta,red)">
+                        <input id="customColor" type="color" value="${S.brushColor}" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full">
+                    </label>
+                </div>
+                <div class="h-6 border-l border-gray-300"></div>
+                <div class="flex items-center gap-2">
+                    <span id="sizeLabelText" class="text-xs text-gray-500">${sizeCfg.label}</span>
+                    <input id="sizeSlider" type="range" min="${sizeCfg.min}" max="${sizeCfg.max}" value="${sizeCfg.value}" class="w-24">
+                    <span id="sizeLabel" class="text-xs text-gray-500 w-5">${sizeCfg.value}</span>
+                </div>
+            </div>
+
+            <!-- Paper -->
+            <div class="flex-1 flex items-center justify-center overflow-hidden p-2" id="paperArea">
+                <div id="paperWrap" class="shadow-xl" style="width:fit-content">
+                    <div id="canvasStack" class="relative bg-white border-2 border-gray-300">
+                        <canvas id="layerCanvas0" width="${CANVAS_W}" height="${CANVAS_H}" class="layerCanvas block" style="z-index:1"></canvas>
+                        <canvas id="layerCanvas1" width="${CANVAS_W}" height="${CANVAS_H}" class="layerCanvas block" style="z-index:2; cursor:crosshair"></canvas>
+                        <div id="ocCursorLayer" class="absolute inset-0" style="z-index:3; pointer-events:none"></div>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+
+        setupOpenCanvasDrawing();
+        updateCanvasPlayerList(g);
+        connectCanvasSocket();
+
+        document.getElementById('ocShareBtn').addEventListener('click', () => showShareGameModal(g.code));
+
+        // Flash the shared theme suggestion once when everyone first lands on
+        // the canvas — same word for every player (picked server-side at
+        // /start), unlike the round modes where each player privately rolls
+        // their own. The toolbar chip lets anyone re-flash it later.
+        if (g.theme) {
+            flashOcTheme(g.theme);
+            document.getElementById('ocThemeChip').addEventListener('click', () => flashOcTheme(g.theme));
+        }
+
+        const finishBtn = document.getElementById('finishBtn');
+        if (!finishBtn) return; // only the creator sees a Finish button at all
+        finishBtn.addEventListener('click', async () => {
+            const ok = await showConfirmModal({
+                title: 'Finish this drawing for everyone?',
+                message: "This ends the session for the whole group and saves what's on the canvas right now — no one will be able to draw more.",
+                confirmLabel: 'Finish it',
+                cancelLabel: 'Keep drawing',
+                icon: '🏁',
+                confirmClass: 'bg-[#ffec06] hover:bg-[#e6d405]',
+                confirmTextClass: 'text-black',
+            });
+            if (!ok) return;
+            const btn = document.getElementById('finishBtn');
+            btn.disabled = true;
+            btn.textContent = 'Finishing...';
+            try {
+                const flat = flattenLayers();
+                const normalized = normalizeToOutputSize(flat);
+                const image = normalized.toDataURL('image/png');
+                const data = await api(`/games/${S.code}/finish`, {
+                    method: 'POST',
+                    body: JSON.stringify({ playerId: S.playerId, image }),
+                });
+                S.game = data;
+                stopPolling();
+                disconnectCanvasSocket();
+                S.screen = 'results';
+                render();
+            } catch (e) {
+                alert('Could not finish: ' + e.message);
+                btn.disabled = false;
+                btn.textContent = '🏁 Finish';
+            }
+        });
+    }
+
+    // Pointer handling for the shared canvas: structurally similar to
+    // setupCanvas() above, but every draw call also gets broadcast (and
+    // remote players' draw calls get applied here too, via applyRemoteDrawOp).
+    function setupOpenCanvasDrawing() {
+        const canvases = [document.getElementById('layerCanvas0'), document.getElementById('layerCanvas1')];
+        const ctxs = canvases.map(c => c.getContext('2d', { willReadFrequently: true }));
+        ctxs.forEach(ctx => { ctx.lineCap = 'round'; ctx.lineJoin = 'round'; });
+        ocCtxs = ctxs;
+
+        const topCanvas = canvases[1];
+
+        fitPaper();
+        requestAnimationFrame(fitPaper);
+        window.onresize = fitPaper;
+
+        let activePointer = null;
+        let penSeen = false;
+        let last = null;
+        let lastWidth = 0;
+
+        function pos(e) {
+            const rect = topCanvas.getBoundingClientRect();
+            return {
+                x: (e.clientX - rect.left) * (CANVAS_W / rect.width),
+                y: (e.clientY - rect.top) * (CANVAS_H / rect.height),
+            };
+        }
+
+        let lastBrushPressure = 0.5;
+        function widthFor(e) {
+            const sizeMap = { eraser: S.eraserSize, pencil: S.pencilSize, brush: S.brushSize };
+            const base = sizeMap[S.tool] ?? S.penSize;
+            if (S.tool === 'brush') {
+                const pressure = e.pressure > 0 ? e.pressure : lastBrushPressure;
+                lastBrushPressure = pressure;
+                return Math.max(0.5, base * (0.3 + pressure * 1.4));
+            }
+            return base;
+        }
+
+        const BRUSH_TAPER_IN_POINTS = 6;
+        const BRUSH_TAPER_OUT_POINTS = 8;
+        let brushStroke = [];
+        function brushTaperInFactor(pointIndex) {
+            return Math.min(1, (pointIndex + 1) / BRUSH_TAPER_IN_POINTS);
+        }
+
+        let airbrushRaf = null;
+        let airbrushTarget = null;
+        let lastAirbrushPressure = 0.5;
+        let airbrushFrameCount = 0;
+        function airbrushPressureFor(e) {
+            if (e.pointerType !== 'pen') return 0.5;
+            const pressure = e.pressure > 0 ? e.pressure : lastAirbrushPressure;
+            lastAirbrushPressure = pressure;
+            return pressure;
+        }
+        function airbrushTick() {
+            if (!airbrushTarget) return;
+            const radius = S.airbrushSize;
+            ocStampAirbrushFrame(ctxs[S.activeLayer], S.brushColor, radius, airbrushTarget, lastAirbrushPressure);
+            // Broadcasting every frame would be excessive — every 3rd frame
+            // (~20fps) is still a convincing spray on remote screens.
+            airbrushFrameCount++;
+            if (airbrushFrameCount % 3 === 0) {
+                ocSend({ type: 'airbrush', x: airbrushTarget.x, y: airbrushTarget.y, pressure: lastAirbrushPressure, color: S.brushColor, layer: S.activeLayer, radius });
+            }
+            airbrushRaf = requestAnimationFrame(airbrushTick);
+        }
+        function startAirbrush(p, e) {
+            airbrushTarget = p;
+            lastAirbrushPressure = airbrushPressureFor(e);
+            airbrushFrameCount = 0;
+            airbrushRaf = requestAnimationFrame(airbrushTick);
+        }
+        function stopAirbrush() {
+            if (airbrushRaf !== null) cancelAnimationFrame(airbrushRaf);
+            airbrushRaf = null;
+            airbrushTarget = null;
+        }
+
+        let lastCursorSend = 0;
+        function sendCursor(p) {
+            const now = performance.now();
+            if (now - lastCursorSend < 50) return; // ~20/sec is plenty for a smooth-looking pointer
+            lastCursorSend = now;
+            ocSend({ type: 'cursor', x: p.x, y: p.y });
+        }
+
+        topCanvas.addEventListener('pointerdown', e => {
+            e.preventDefault();
+            if (e.pointerType === 'pen') penSeen = true;
+            else if (e.pointerType === 'touch' && penSeen) return;
+            if (activePointer !== null) return;
+            if (S.tool === 'brush' && e.pointerType !== 'pen') return;
+
+            const p = pos(e);
+
+            if (S.tool === 'fill') {
+                floodFill(ctxs[S.activeLayer], Math.round(p.x), Math.round(p.y), S.brushColor);
+                ocSend({ type: 'fill', x: Math.round(p.x), y: Math.round(p.y), color: S.brushColor, layer: S.activeLayer });
+                return;
+            }
+
+            activePointer = e.pointerId;
+            topCanvas.setPointerCapture(e.pointerId);
+            last = p;
+
+            if (S.tool === 'airbrush') {
+                startAirbrush(p, e);
+            } else if (S.tool === 'brush') {
+                brushStroke = [];
+                lastBrushPressure = e.pressure > 0 ? e.pressure : 0.5;
+                const w = widthFor(e) * brushTaperInFactor(0);
+                brushStroke.push({ x: p.x, y: p.y, width: w });
+                ocDrawSegment(ctxs[S.activeLayer], S.tool, S.brushColor, p, { x: p.x + 0.01, y: p.y + 0.01 }, w, w);
+                lastWidth = w;
+                ocSend({ type: 'stroke', phase: 'down', tool: S.tool, color: S.brushColor, layer: S.activeLayer, x: p.x, y: p.y, width: w });
+            } else {
+                const w = widthFor(e);
+                ocDrawSegment(ctxs[S.activeLayer], S.tool, S.brushColor, p, { x: p.x + 0.01, y: p.y + 0.01 }, w, w);
+                lastWidth = w;
+                ocSend({ type: 'stroke', phase: 'down', tool: S.tool, color: S.brushColor, layer: S.activeLayer, x: p.x, y: p.y, width: w });
+            }
+        });
+
+        topCanvas.addEventListener('pointermove', e => {
+            if (e.pointerId !== activePointer) {
+                // Not actively drawing — still broadcast pointer position so
+                // others can see where this player's cursor is hovering.
+                if (activePointer === null) sendCursor(pos(e));
+                return;
+            }
+            e.preventDefault();
+
+            if (S.tool === 'airbrush') {
+                airbrushTarget = pos(e);
+                lastAirbrushPressure = airbrushPressureFor(e);
+                return;
+            }
+
+            const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+            const batch = [];
+            for (const ev of events) {
+                const p = pos(ev);
+                let w;
+                if (S.tool === 'brush') {
+                    w = widthFor(ev) * brushTaperInFactor(brushStroke.length);
+                    brushStroke.push({ x: p.x, y: p.y, width: w });
+                } else {
+                    w = widthFor(ev);
+                }
+                ocDrawSegment(ctxs[S.activeLayer], S.tool, S.brushColor, last, p, lastWidth, w);
+                lastWidth = w;
+                last = p;
+                batch.push({ x: p.x, y: p.y, width: w });
+            }
+            if (batch.length) {
+                ocSend({ type: 'stroke', phase: 'move', tool: S.tool, color: S.brushColor, layer: S.activeLayer, points: batch });
+            }
+        });
+
+        const stop = e => {
+            if (e.pointerId === activePointer) {
+                if (S.tool === 'brush') {
+                    const tailStart = Math.max(0, brushStroke.length - BRUSH_TAPER_OUT_POINTS);
+                    const tail = brushStroke.slice(tailStart);
+                    ocFinishBrushTaper(ctxs[S.activeLayer], S.brushColor, tail);
+                    ocSend({ type: 'stroke', phase: 'up', tool: 'brush', color: S.brushColor, layer: S.activeLayer, tail });
+                    brushStroke = [];
+                }
+                if (S.tool === 'airbrush') stopAirbrush();
+                activePointer = null;
+                last = null;
+            }
+        };
+        topCanvas.addEventListener('pointerup', stop);
+        topCanvas.addEventListener('pointercancel', stop);
+        topCanvas.addEventListener('contextmenu', e => e.preventDefault());
+
+        // ---- Toolbar wiring (tool picker, layers, color, size) — same UI
+        // patterns as setupCanvas, minus Undo/Clear (see renderCanvasMode). ----
+        const toolTrigger = document.getElementById('toolTrigger');
+        const toolMenu = document.getElementById('toolMenu');
+        const toolTriggerLabel = document.getElementById('toolTriggerLabel');
+        const toolTriggerIcon = document.getElementById('toolTriggerIcon');
+
+        function selectTool(tool) {
+            S.tool = tool;
+            toolTriggerIcon.src = TOOL_META[tool].icon;
+            toolTriggerLabel.textContent = TOOL_META[tool].label;
+            document.querySelectorAll('.toolMenuItem').forEach(btn => {
+                btn.classList.toggle('bg-gray-100', btn.dataset.tool === tool);
+            });
+            topCanvas.style.cursor = tool === 'fill' ? 'cell' : 'crosshair';
+            document.getElementById('brushHint').classList.toggle('hidden', tool !== 'brush');
+
+            const cfg = sizeConfigFor(tool);
+            const slider = document.getElementById('sizeSlider');
+            slider.min = cfg.min;
+            slider.max = cfg.max;
+            slider.value = cfg.value;
+            document.getElementById('sizeLabel').textContent = cfg.value;
+            document.getElementById('sizeLabelText').textContent = cfg.label;
+
+            toolMenu.classList.add('hidden');
+        }
+        toolTrigger.addEventListener('click', e => {
+            e.stopPropagation();
+            toolMenu.classList.toggle('hidden');
+        });
+        document.querySelectorAll('.toolMenuItem').forEach(btn => {
+            btn.addEventListener('click', () => selectTool(btn.dataset.tool));
+        });
+        document.onclick = e => {
+            if (!toolMenu.contains(e.target) && e.target !== toolTrigger) toolMenu.classList.add('hidden');
+        };
+
+        document.querySelectorAll('.layerBtn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                S.activeLayer = Number(btn.dataset.layer);
+                document.querySelectorAll('.layerBtn').forEach(b => {
+                    b.classList.toggle('active', b === btn);
+                });
+            });
+        });
+
+        function selectColor(color) {
+            S.brushColor = color;
+            document.querySelectorAll('.colorBtn').forEach(b => {
+                b.className = `colorBtn w-7 h-7 rounded-full border-2 ${b.dataset.color === color ? 'border-gray-900 scale-110' : 'border-gray-200'}`;
+            });
+            if (S.tool === 'eraser') selectTool('pen');
+        }
+        document.querySelectorAll('.colorBtn').forEach(btn => {
+            btn.addEventListener('click', () => selectColor(btn.dataset.color));
+        });
+        document.getElementById('customColor').addEventListener('input', e => selectColor(e.target.value));
+
+        document.getElementById('sizeSlider').addEventListener('input', e => {
+            const val = Number(e.target.value);
+            if (S.tool === 'eraser') S.eraserSize = val;
+            else if (S.tool === 'pencil') S.pencilSize = val;
+            else if (S.tool === 'brush') S.brushSize = val;
+            else if (S.tool === 'airbrush') S.airbrushSize = val;
+            else S.penSize = val;
+            document.getElementById('sizeLabel').textContent = val;
+        });
+        document.onkeydown = null; // no undo shortcut on this screen (no undo stack)
+    }
+
     function setupTimer() {
         const g = S.game;
         const badge = document.getElementById('timerBadge');
@@ -2053,8 +2800,75 @@
     }
 
     // ---------- RESULTS ----------
+    function renderOpenCanvasResults() {
+        const g = S.game;
+        const image = g.canvasImage;
+        const artists = g.players.map(p => p.name);
+
+        app.innerHTML = `
+        <div class="min-h-screen app-bg p-4 py-10">
+            <div class="max-w-lg mx-auto">
+                <div class="text-center mb-8">
+                    <h1 class="text-4xl font-bold text-white mb-2">🎉 The Big Reveal!</h1>
+                    <p class="text-white/80">One shared canvas, ${artists.length} artists.</p>
+                </div>
+
+                <div class="bg-white rounded-2xl shadow-2xl p-4">
+                    <div class="rounded-lg overflow-hidden border-2 border-gray-200">
+                        <img src="${image}" class="block w-full">
+                    </div>
+                    <p class="mt-3 text-xs text-gray-500"><b>Artists:</b> ${artists.map(a => escapeHtml(a)).join(', ')}</p>
+                    <div class="grid grid-cols-2 gap-2 mt-3">
+                        <button id="ocDownloadBtn" class="px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-lg">
+                            📥 Download
+                        </button>
+                        <button id="ocDownloadSocialBtn" class="px-3 py-2 bg-gray-700 hover:bg-gray-800 text-white text-sm font-semibold rounded-lg">
+                            📱 Share
+                        </button>
+                    </div>
+                </div>
+
+                <div class="mt-8 space-y-3">
+                    <button id="shareBtn" class="w-full px-4 py-3 bg-white/20 hover:bg-white/30 text-white font-semibold rounded-xl border border-white/40">
+                        🔗 Copy link to these results
+                    </button>
+                    <button id="againBtn" class="w-full px-4 py-3 bg-[#ffec06] hover:bg-[#e6d405] text-black font-bold rounded-xl text-lg">
+                        🔄 Start Over
+                    </button>
+                </div>
+            </div>
+        </div>`;
+
+        document.getElementById('ocDownloadBtn').addEventListener('click', () => {
+            const a = document.createElement('a');
+            a.href = image;
+            a.download = `exquisite-corpse-opencanvas-${g.code}.png`;
+            a.click();
+        });
+        document.getElementById('ocDownloadSocialBtn').addEventListener('click', () => {
+            fitToSocialSquare(image).then(dataUrl => {
+                const a = document.createElement('a');
+                a.href = dataUrl;
+                a.download = `exquisite-corpse-opencanvas-${g.code}-social.png`;
+                a.click();
+            });
+        });
+        document.getElementById('shareBtn').addEventListener('click', () => {
+            navigator.clipboard.writeText(`${location.origin}/?code=${g.code}`);
+        });
+        document.getElementById('againBtn').addEventListener('click', () => {
+            clearSession();
+            S.screen = 'home';
+            S.lastRound = null;
+            S.submittedThisRound = false;
+            history.replaceState(null, '', '/');
+            render();
+        });
+    }
+
     function renderResults() {
         const g = S.game;
+        if (g.mode === 'opencanvas') { renderOpenCanvasResults(); return; }
         const sheets = g.sheets || [];
         // 2-3 sheets keep their original tight layout; larger parties get a
         // wider, more columnar grid so the reveal wall stays scannable
