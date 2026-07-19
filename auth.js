@@ -111,10 +111,6 @@ exports.handleLogin = async (body) => {
     throw { status: 401, error: 'Invalid credentials' };
   }
 
-  if (!user.paid) {
-    throw { status: 403, error: 'Account not yet activated (payment pending)' };
-  }
-
   try {
     if (!exports.verifyPassword(password, user.passwordHash, user.passwordSalt)) {
       throw { status: 401, error: 'Invalid credentials' };

@@ -5,7 +5,7 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY || null;
 // is always to the owner's own (Resend account) verified address.
 const FROM_ADDRESS = process.env.NOTIFY_FROM_EMAIL || 'Exquisite Corpse <onboarding@resend.dev>';
 
-// Owner notification email — sent on every new paid/beta account signup, not
+// Owner notification email — sent on every new account signup, not
 // per game-join (that'd be dozens/day and low-signal). Overridable via env
 // var so the destination can change without a code edit/redeploy.
 const NOTIFY_EMAIL = process.env.NOTIFY_EMAIL || 'heyrayinks@gmail.com';

@@ -150,12 +150,12 @@ function sheetForPlayer(playerOrder, round, maxPlayers) {
   return (playerOrder - 1 + round - 1) % maxPlayers;
 }
 
-// A paid account's uploaded avatar image outranks their picked emoji — same
-// premium perk as the account page, just surfaced in the lobby's player list too.
+// Any account's uploaded avatar image outranks their picked emoji — same
+// as the account page, just surfaced in the lobby's player list too.
 function playerIcon(p) {
   if (p.userId) {
     const user = data.getUserById(p.userId);
-    if (user && user.paid && user.avatarDataUrl) {
+    if (user && user.avatarDataUrl) {
       return { avatarDataUrl: user.avatarDataUrl, emoji: p.emoji || null };
     }
   }
@@ -312,17 +312,51 @@ function handleApi(req, res, url) {
   }
 
   // ===== STRIPE/PAYMENTS =====
+  // POST /api/stripe/checkout (auth required) — an already-logged-in, free
+  // account subscribing to the monthly brush unlock. Not a signup step
+  // anymore; accounts exist before this is ever called.
   if (url.pathname === '/api/stripe/checkout' && req.method === 'POST') {
-    return readBody(req, 10_000, async (err, body) => {
-      if (err) return json(res, 400, { error: err.message });
-      try {
-        const session = await payments.createCheckoutSession(body.email, body.username, body.password);
-        json(res, 201, { url: session.url });
-      } catch (e) {
-        const status = e.status || 500;
-        json(res, status, { error: e.error || e.message });
-      }
-    });
+    try {
+      const userId = auth.extractAndVerifyToken(req);
+      // Raw user record (not the serialized/public shape) — needed for
+      // stripeCustomerId, which the public API surface doesn't expose.
+      const user = data.getUserById(userId);
+      if (!user) return json(res, 404, { error: 'User not found' });
+      return (async () => {
+        try {
+          const session = await payments.createSubscriptionCheckoutSession(user);
+          json(res, 201, { url: session.url });
+        } catch (e) {
+          const status = e.status || 500;
+          json(res, status, { error: e.error || e.message });
+        }
+      })();
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.error || e.message });
+    }
+  }
+
+  // POST /api/stripe/portal (auth required) — Stripe-hosted page to manage
+  // or cancel an existing subscription.
+  if (url.pathname === '/api/stripe/portal' && req.method === 'POST') {
+    try {
+      const userId = auth.extractAndVerifyToken(req);
+      const user = data.getUserById(userId);
+      if (!user) return json(res, 404, { error: 'User not found' });
+      return (async () => {
+        try {
+          const session = await payments.createPortalSession(user);
+          json(res, 200, { url: session.url });
+        } catch (e) {
+          const status = e.status || 500;
+          json(res, status, { error: e.error || e.message });
+        }
+      })();
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.error || e.message });
+    }
   }
 
   // POST /api/webhooks/stripe - raw body required for signature verification
@@ -345,25 +379,26 @@ function handleApi(req, res, url) {
     return;
   }
 
-  // GET /api/auth/checkout-status - poll after redirect; ready once the webhook has created the user
-  if (url.pathname.startsWith('/api/auth/checkout-status') && req.method === 'GET') {
-    const sessionId = url.searchParams.get('session_id');
-    if (!sessionId) {
-      return json(res, 400, { error: 'session_id required' });
-    }
-
-    const user = data.getUserByCheckoutSessionId(sessionId);
-    if (!user) {
-      return json(res, 200, { ready: false });
-    }
-
-    const token = auth.signToken(user.id);
-    return json(res, 200, { ready: true, token, user: account.serializeUser(user) });
+  // ===== AUTH =====
+  // POST /api/auth/signup { email, username, password } — free, instant
+  // account creation. No payment involved; the account can subscribe (or
+  // not) later from the account page.
+  if (url.pathname === '/api/auth/signup' && req.method === 'POST') {
+    return readBody(req, 10_000, async (err, body) => {
+      if (err) return json(res, 400, { error: err.message });
+      try {
+        const result = await payments.handleFreeSignup(body);
+        json(res, 200, result);
+      } catch (e) {
+        const status = e.status || 500;
+        json(res, status, { error: e.error || e.message });
+      }
+    });
   }
 
-  // ===== AUTH =====
   // POST /api/auth/beta-signup { email, username, password, betaCode }
-  // Creates a paid account directly, bypassing Stripe, when BETA_CODE matches.
+  // Creates a free account and grants free subscriber status, bypassing
+  // Stripe, when BETA_CODE matches.
   if (url.pathname === '/api/auth/beta-signup' && req.method === 'POST') {
     return readBody(req, 10_000, async (err, body) => {
       if (err) return json(res, 400, { error: err.message });
@@ -767,12 +802,6 @@ function handleApi(req, res, url) {
       }
 
       const user = account.getMe(userId);
-
-      // Same free-tier "one passthrough game at a time" gate as /join.
-      if (game.mode === 'passthrough' && !user.paid && myActiveGames(userId, game.code).length > 0) {
-        return json(res, 403, { error: 'Free accounts can only be in one Pass the Sheet game at a time. Upgrade to play multiple at once.' });
-      }
-
       const player = addPlayerToGame(game, user.username, userId);
       game.lastActivityAt = Date.now();
       data.removeGameInvite(userId, inviteId).catch(() => {});
@@ -885,17 +914,6 @@ function handleApi(req, res, url) {
 
       // set only if the joiner happens to be logged in; anonymous play is unaffected
       const joinerUserId = auth.tryExtractUserId(req);
-
-      // Free accounts can only be mid-way through one 'passthrough' game at a
-      // time — paid accounts can run several at once without one unresponsive
-      // partner blocking the others. Anonymous joins have no account to gate.
-      if (game.mode === 'passthrough' && joinerUserId) {
-        const joiner = data.getUserById(joinerUserId);
-        if (joiner && !joiner.paid && myActiveGames(joinerUserId, code).length > 0) {
-          return json(res, 403, { error: 'Free accounts can only be in one Pass the Sheet game at a time. Upgrade to play multiple at once.' });
-        }
-      }
-
       const player = addPlayerToGame(game, name, joinerUserId, body.emoji);
       game.lastActivityAt = Date.now();
 

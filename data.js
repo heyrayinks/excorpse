@@ -96,7 +96,7 @@ exports.getUserByUsername = (username) => {
   return users.find(u => u.username.toLowerCase() === username.toLowerCase()) || null;
 };
 
-exports.createUser = (email, username, passwordHash, passwordSalt, stripeCustomerId, stripeCheckoutSessionId, signupMethod = 'stripe', securityQuestion = null, securityAnswerHash = null, securityAnswerSalt = null) => {
+exports.createUser = (email, username, passwordHash, passwordSalt, signupMethod = 'free', subscribed = false, securityQuestion = null, securityAnswerHash = null, securityAnswerSalt = null) => {
   return queue(() => {
     const data = readUsers();
     // Re-validate on write (defensive)
@@ -114,10 +114,14 @@ exports.createUser = (email, username, passwordHash, passwordSalt, stripeCustome
       passwordHash,
       passwordSalt,
       avatarDataUrl: null,
-      paid: true, // Only created after Stripe confirms payment (or a valid beta code)
-      signupMethod, // 'stripe' | 'beta' — for tracking how the account was unlocked
-      stripeCustomerId,
-      stripeCheckoutSessionId,
+      // Every account is free — this only ever gates brushes released after
+      // someone's subscription lapses (see TOOL_META in index.html). Synced
+      // from Stripe subscription webhooks, not set once and forgotten.
+      subscribed,
+      subscriptionStatus: subscribed ? 'active' : null,
+      signupMethod, // 'free' | 'beta-subscriber' — how the account was created
+      stripeCustomerId: null,     // set once they start a subscribe checkout
+      stripeSubscriptionId: null, // set once checkout completes
       createdAt: Date.now(),
       favorites: [],
       // Password reset uses a security question instead of email — this app
@@ -216,15 +220,12 @@ exports.togglePinFavorite = (userId, favoriteId) => {
   });
 };
 
-// For webhook verification: find user by Stripe checkout session ID
-exports.getUserByCheckoutSessionId = (sessionId) => {
+// For subscription webhooks that don't carry our own userId metadata
+// (e.g. some Stripe-generated events reference the customer only).
+exports.getUserByStripeCustomerId = (customerId) => {
   const { users } = readUsers();
-  return users.find(u => u.stripeCheckoutSessionId === sessionId) || null;
+  return users.find(u => u.stripeCustomerId === customerId) || null;
 };
-
-// Mark session ID on a pending user (before payment confirmed)
-// In this design, pending users don't exist on disk until webhook fires
-// So this is mainly for Stripe metadata storage; webhook creates the user
 
 // ===== Friends =====
 

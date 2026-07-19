@@ -34,49 +34,29 @@ exports.validateSignupRequest = (body) => {
   return errors.length > 0 ? errors : null;
 };
 
-// Create Stripe Checkout Session for signup
-exports.createCheckoutSession = async (email, username, password) => {
+// POST /api/auth/signup — free, instant account creation. No payment
+// involved at all; every account starts unsubscribed and can subscribe
+// later (or never) from the account page.
+exports.handleFreeSignup = async (body) => {
+  const { email, username, password } = body;
   const errors = exports.validateSignupRequest({ email, username, password });
   if (errors) {
-    throw { status: 400, error: errors[0] }; // Return first error
+    throw { status: 400, error: errors[0] };
   }
 
-  // Hash password server-side (never send raw password to Stripe)
   const { passwordHash, passwordSalt } = auth.hashPassword(password);
+  const user = await data.createUser(email, username, passwordHash, passwordSalt, 'free', false);
+  notify.notifyNewSignup(user);
 
-  // Metadata fields: these are passed back in the webhook
-  // Stripe metadata has a 500-char limit per value, so keep it minimal
-  const metadata = {
-    email,
-    username,
-    passwordHash,
-    passwordSalt,
-  };
-
-  try {
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
-      mode: 'payment',
-      line_items: [
-        {
-          price: process.env.STRIPE_PRICE_ID,
-          quantity: 1,
-        },
-      ],
-      success_url: `${process.env.APP_URL || 'http://localhost:3000'}/?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.APP_URL || 'http://localhost:3000'}/?checkout=cancelled`,
-      metadata,
-    });
-
-    return session;
-  } catch (err) {
-    console.error('Stripe error:', err);
-    throw { status: 500, error: 'Failed to create checkout session' };
-  }
+  const token = auth.signToken(user.id);
+  return { token, user: account.serializeUser(user) };
 };
 
-// Beta signup: creates a paid account directly, bypassing Stripe entirely,
-// when a valid BETA_CODE is supplied. Auto-logs in on success, same shape as /api/auth/login.
+// Beta signup: creates a free account directly AND grants free subscriber
+// status, bypassing Stripe entirely, when a valid BETA_CODE is supplied.
+// Auto-logs in on success, same shape as /api/auth/login. Accounts no
+// longer need bypassing (they're free either way) — this is now purely a
+// way to gift/test subscriber access without a real charge.
 exports.handleBetaSignup = async (body) => {
   const { email, username, password, betaCode } = body;
 
@@ -93,37 +73,129 @@ exports.handleBetaSignup = async (body) => {
   }
 
   const { passwordHash, passwordSalt } = auth.hashPassword(password);
-  const user = await data.createUser(email, username, passwordHash, passwordSalt, null, null, 'beta');
+  const user = await data.createUser(email, username, passwordHash, passwordSalt, 'beta-subscriber', true);
   notify.notifyNewSignup(user);
 
   const token = auth.signToken(user.id);
   return { token, user: account.serializeUser(user) };
 };
 
-// Handle Stripe webhook: checkout.session.completed
-exports.handleCheckoutComplete = async (event) => {
-  const session = event.data.object;
+// POST /api/stripe/checkout (auth required) — an already-logged-in, free
+// account subscribing to the monthly brush unlock. Unlike the old one-time
+// flow, the account already exists here; this only ever starts/re-starts a
+// subscription for it, never creates one.
+exports.createSubscriptionCheckoutSession = async (user) => {
+  const appUrl = process.env.APP_URL || 'http://localhost:3000';
+  try {
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      payment_method_types: ['card'],
+      customer: user.stripeCustomerId || undefined,
+      customer_email: user.stripeCustomerId ? undefined : user.email,
+      line_items: [
+        {
+          price: process.env.STRIPE_SUBSCRIPTION_PRICE_ID,
+          quantity: 1,
+        },
+      ],
+      // Metadata on both the Session and the Subscription itself — webhook
+      // events for subscription updates/cancellation reference the
+      // subscription/customer, not the checkout session that created it.
+      metadata: { userId: user.id },
+      subscription_data: { metadata: { userId: user.id } },
+      success_url: `${appUrl}/?subscribe=success`,
+      cancel_url: `${appUrl}/?subscribe=cancelled`,
+    });
 
-  // Re-validate signup data from metadata (defensive check)
-  const { email, username, passwordHash, passwordSalt } = session.metadata;
-  if (!email || !username || !passwordHash || !passwordSalt) {
-    console.error('Invalid metadata in webhook:', session.id);
-    throw new Error('Missing signup metadata');
+    return session;
+  } catch (err) {
+    console.error('Stripe error:', err);
+    throw { status: 500, error: 'Failed to create checkout session' };
   }
+};
 
-  // Check for race condition (user already created)
-  if (data.getUserByEmail(email)) {
-    console.log('User already exists for email:', email);
+// POST /api/stripe/portal (auth required) — Stripe-hosted page for a
+// subscriber to update their card or cancel, so there's no custom
+// billing-management UI to build here.
+exports.createPortalSession = async (user) => {
+  if (!user.stripeCustomerId) {
+    throw { status: 400, error: 'No subscription to manage yet' };
+  }
+  const appUrl = process.env.APP_URL || 'http://localhost:3000';
+  try {
+    const session = await stripe.billingPortal.sessions.create({
+      customer: user.stripeCustomerId,
+      return_url: `${appUrl}/?account`,
+    });
+    return session;
+  } catch (err) {
+    console.error('Stripe error:', err);
+    throw { status: 500, error: 'Failed to open billing portal' };
+  }
+};
+
+// checkout.session.completed — a subscribe checkout just completed. Finds
+// the account via the metadata attached at session-creation time (the
+// account already exists; this only ever activates a subscription on it).
+async function handleSubscriptionCheckoutComplete(event) {
+  const session = event.data.object;
+  const userId = session.metadata && session.metadata.userId;
+  if (!userId) {
+    console.error('checkout.session.completed with no userId metadata:', session.id);
     return;
   }
 
-  // Create the user with paid: true
-  const user = await data.createUser(email, username, passwordHash, passwordSalt, session.customer, session.id);
-  console.log('User created via webhook:', user.id, email);
-  notify.notifyNewSignup(user);
+  const user = data.getUserById(userId);
+  if (!user) {
+    console.error('checkout.session.completed for unknown user:', userId);
+    return;
+  }
 
-  return user;
-};
+  await data.updateUser(userId, {
+    stripeCustomerId: session.customer,
+    stripeSubscriptionId: session.subscription,
+    subscribed: true,
+    subscriptionStatus: 'active',
+  });
+  console.log('Subscription activated for user:', userId);
+}
+
+// customer.subscription.updated — fires on renewals, plan changes, and
+// status transitions (e.g. active -> past_due after a failed charge).
+async function handleSubscriptionUpdated(event) {
+  const subscription = event.data.object;
+  const userId = subscription.metadata && subscription.metadata.userId;
+  const user = userId ? data.getUserById(userId) : data.getUserByStripeCustomerId(subscription.customer);
+  if (!user) {
+    console.error('customer.subscription.updated for unknown user, customer:', subscription.customer);
+    return;
+  }
+
+  const subscribed = subscription.status === 'active' || subscription.status === 'trialing';
+  await data.updateUser(user.id, {
+    stripeSubscriptionId: subscription.id,
+    subscriptionStatus: subscription.status,
+    subscribed,
+  });
+}
+
+// customer.subscription.deleted — cancellation (immediate, or the period
+// finally ending after a Portal-initiated cancel-at-period-end). Access
+// reverts to the free brush set.
+async function handleSubscriptionDeleted(event) {
+  const subscription = event.data.object;
+  const userId = subscription.metadata && subscription.metadata.userId;
+  const user = userId ? data.getUserById(userId) : data.getUserByStripeCustomerId(subscription.customer);
+  if (!user) {
+    console.error('customer.subscription.deleted for unknown user, customer:', subscription.customer);
+    return;
+  }
+
+  await data.updateUser(user.id, {
+    subscribed: false,
+    subscriptionStatus: 'canceled',
+  });
+}
 
 // Webhook endpoint handler (requires raw body for signature verification)
 exports.handleWebhook = async (rawBody, signature) => {
@@ -140,17 +212,23 @@ exports.handleWebhook = async (rawBody, signature) => {
     throw { status: 400, error: 'Invalid signature' };
   }
 
-  // Handle checkout completion
-  if (event.type === 'checkout.session.completed') {
-    try {
-      await exports.handleCheckoutComplete(event);
-    } catch (err) {
-      console.error('Error processing checkout completion:', err);
-      // Still return 200 to avoid Stripe retry storms
-      // Stripe will retry if we return 5xx
+  try {
+    if (event.type === 'checkout.session.completed') {
+      await handleSubscriptionCheckoutComplete(event);
+    } else if (event.type === 'customer.subscription.updated') {
+      await handleSubscriptionUpdated(event);
+    } else if (event.type === 'customer.subscription.deleted') {
+      await handleSubscriptionDeleted(event);
     }
+    // invoice.payment_failed isn't separately handled — Stripe already
+    // retries failed renewals automatically and fires
+    // customer.subscription.updated (status -> past_due, then eventually
+    // .deleted if retries exhaust), which the handlers above already cover.
+  } catch (err) {
+    console.error('Error processing webhook event:', event.type, err);
+    // Still return 200 to avoid Stripe retry storms — Stripe will retry if
+    // we return 5xx, and a transient failure here shouldn't jam the queue.
   }
 
-  // For other event types, just acknowledge (200)
   return { received: true };
 };
