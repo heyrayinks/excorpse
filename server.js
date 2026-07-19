@@ -919,8 +919,13 @@ function handleApi(req, res, url) {
       if (game.openHeadcount) {
         // Locking the roster here, not at creation, is the whole point of this
         // mode — whatever showed up by the time the creator hits Start becomes
-        // the real player count the rotation math runs on.
-        if (game.players.length < 2) return json(res, 409, { error: 'Need at least 2 players to start' });
+        // the real player count the rotation math runs on. Open Canvas has no
+        // rotation to fill, so a lone creator can start solo; every other
+        // mode still needs a partner to draw/pass sheets with.
+        const minPlayers = game.mode === 'opencanvas' ? 1 : 2;
+        if (game.players.length < minPlayers) {
+          return json(res, 409, { error: `Need at least ${minPlayers} player${minPlayers > 1 ? 's' : ''} to start` });
+        }
         game.maxPlayers = game.players.length;
         game.sheets = Array.from({ length: game.maxPlayers }, () => ({}));
         game.openHeadcount = false;
