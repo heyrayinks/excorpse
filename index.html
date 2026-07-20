@@ -2751,6 +2751,16 @@
     let ocSocket = null;
     let ocCtxs = null; // [bottomCtx, topCtx], set by setupOpenCanvasDrawing while the canvas screen is live
     let ocReconnectTimer = null;
+    // Reconnect backoff — starts at 1s, doubles on each failed retry up to a
+    // cap, resets to 1s on a successful open. Keeps a genuinely-down server
+    // from being hammered every 2s while still reconnecting fast after a
+    // brief mobile blip.
+    let ocReconnectDelay = 1000;
+    const OC_RECONNECT_MAX = 20000;
+    // Installed while the canvas screen is live: when the tab is foregrounded
+    // again (or the network returns) we reconnect immediately rather than
+    // waiting out a backoff timer that a backgrounded phone likely froze.
+    let ocResumeHandler = null;
     const ocRemoteStrokeState = new Map(); // player order -> { last:{x,y}, lastWidth, preset? }
     const ocCursorEls = new Map();          // player order -> cursor DOM element
     // Pooled per-player wet buffers for remote watercolor strokes (Open
@@ -2912,6 +2922,7 @@
 
         socket.addEventListener('open', () => {
             if (ocSocket !== socket) return;
+            ocReconnectDelay = 1000; // healthy connection — reset backoff
             const badge = document.getElementById('ocConnStatus');
             if (badge) { badge.textContent = '🟢 Live'; badge.className = 'text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700'; }
         });
@@ -2949,15 +2960,43 @@
             const badge = document.getElementById('ocConnStatus');
             if (badge) { badge.textContent = '🔴 Reconnecting…'; badge.className = 'text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-600'; }
             if (S.screen === 'canvas' && S.game && S.game.status === 'active') {
-                ocReconnectTimer = setTimeout(connectCanvasSocket, 2000);
+                if (ocReconnectTimer) clearTimeout(ocReconnectTimer);
+                ocReconnectTimer = setTimeout(connectCanvasSocket, ocReconnectDelay);
+                ocReconnectDelay = Math.min(OC_RECONNECT_MAX, ocReconnectDelay * 2);
             }
         };
         socket.addEventListener('close', scheduleReconnect);
         socket.addEventListener('error', () => socket.close());
+
+        // Reconnect the instant the tab is foregrounded or the network comes
+        // back — a backgrounded phone often freezes the backoff timer and may
+        // never fire a clean 'close', so without this the canvas stays frozen
+        // when the user returns from checking a notification. Installed once
+        // per connect; disconnectCanvasSocket removes it (and connect below
+        // re-installs), so it's live exactly while we're on the canvas screen.
+        if (!ocResumeHandler) {
+            ocResumeHandler = () => {
+                if (document.hidden) return; // only act on resume, not on hide
+                if (S.screen !== 'canvas' || !S.game || S.game.status !== 'active') return;
+                const s = ocSocket;
+                if (!s || (s.readyState !== WebSocket.OPEN && s.readyState !== WebSocket.CONNECTING)) {
+                    if (ocReconnectTimer) { clearTimeout(ocReconnectTimer); ocReconnectTimer = null; }
+                    ocReconnectDelay = 1000;
+                    connectCanvasSocket();
+                }
+            };
+            document.addEventListener('visibilitychange', ocResumeHandler);
+            window.addEventListener('online', ocResumeHandler);
+        }
     }
 
     function disconnectCanvasSocket() {
         if (ocReconnectTimer) { clearTimeout(ocReconnectTimer); ocReconnectTimer = null; }
+        if (ocResumeHandler) {
+            document.removeEventListener('visibilitychange', ocResumeHandler);
+            window.removeEventListener('online', ocResumeHandler);
+            ocResumeHandler = null;
+        }
         if (ocSocket) { const s = ocSocket; ocSocket = null; s.close(); }
         ocRemoteStrokeState.clear();
         ocCursorEls.forEach(el => el.remove());
@@ -3924,6 +3963,176 @@
     // per game here, keyed just by game code).
     const savedOcFavoriteKeys = new Set();
 
+    // ---------- OPEN CANVAS TIMELAPSE REPLAY ----------
+    // Plays the game's persisted draw-op log back onto an offscreen pair of
+    // layer canvases, compressed into a short timelapse, on the results
+    // screen. Reuses applyRemoteDrawOp() wholesale — the exact same renderer
+    // that paints remote players' live strokes and a late-joiner's history —
+    // by pointing ocCtxs at the replay canvases and feeding it ops paced over
+    // time instead of all at once. Optionally records the playback to a WebM
+    // for sharing, where the browser supports canvas capture.
+    let ocReplayRaf = null;
+    function showOpenCanvasReplay(code) {
+        const overlay = document.createElement('div');
+        overlay.className = 'fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4';
+        overlay.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl p-4 w-full max-w-md">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="font-bold text-lg text-gray-900">⏱ Replay</h3>
+                    <button id="ocReplayClose" class="text-gray-400 hover:text-gray-700 text-2xl leading-none">&times;</button>
+                </div>
+                <div class="rounded-lg overflow-hidden border-2 border-gray-200 bg-white flex items-center justify-center" style="aspect-ratio:${BASE_CANVAS_W}/${BASE_CANVAS_H}; max-height:60vh">
+                    <canvas id="ocReplayCanvas" class="block w-full h-full" style="object-fit:contain"></canvas>
+                </div>
+                <div class="mt-3 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                    <div id="ocReplayProgress" class="h-full bg-[#ffec06] transition-none" style="width:0%"></div>
+                </div>
+                <p id="ocReplayStatus" class="text-xs text-gray-400 mt-2 text-center">Loading replay…</p>
+                <div class="grid grid-cols-2 gap-2 mt-3">
+                    <button id="ocReplayAgain" class="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg" disabled>🔄 Replay</button>
+                    <button id="ocReplaySave" class="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg hidden">🎬 Save video</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+
+        const disp = overlay.querySelector('#ocReplayCanvas');
+        disp.width = BASE_CANVAS_W;
+        disp.height = BASE_CANVAS_H;
+        const dispCtx = disp.getContext('2d');
+        const progressEl = overlay.querySelector('#ocReplayProgress');
+        const statusEl = overlay.querySelector('#ocReplayStatus');
+        const againBtn = overlay.querySelector('#ocReplayAgain');
+        const saveBtn = overlay.querySelector('#ocReplaySave');
+
+        // Offscreen layer pair the shared renderer draws into (bottom/top,
+        // same as the live canvas), composited onto the visible canvas.
+        const c0 = document.createElement('canvas'); c0.width = BASE_CANVAS_W; c0.height = BASE_CANVAS_H;
+        const c1 = document.createElement('canvas'); c1.width = BASE_CANVAS_W; c1.height = BASE_CANVAS_H;
+        const rctx0 = c0.getContext('2d', { willReadFrequently: true });
+        const rctx1 = c1.getContext('2d', { willReadFrequently: true });
+        [rctx0, rctx1].forEach(c => { c.lineCap = 'round'; c.lineJoin = 'round'; });
+
+        let strokes = null;
+        let recorder = null, recordChunks = null;
+
+        function compositeFrame() {
+            dispCtx.fillStyle = '#ffffff';
+            dispCtx.fillRect(0, 0, BASE_CANVAS_W, BASE_CANVAS_H);
+            dispCtx.drawImage(c0, 0, 0);
+            dispCtx.drawImage(c1, 0, 0);
+        }
+
+        function cleanupReplayState() {
+            if (ocReplayRaf) { cancelAnimationFrame(ocReplayRaf); ocReplayRaf = null; }
+            // Hand ocCtxs back to a clean state — the live canvas re-sets it
+            // when a new game starts, and the results screen never reads it.
+            ocCtxs = null;
+            ocRemoteStrokeState.clear();
+            ocWetBuffers.clear();
+        }
+
+        function play(record) {
+            if (!strokes || !strokes.length) return;
+            cleanupReplayState();
+            // Open Canvas is always base resolution — point the globals the
+            // renderer reads (floodFill, wet buffers) at it, and aim ocCtxs
+            // at our offscreen layers.
+            CANVAS_W = BASE_CANVAS_W; CANVAS_H = BASE_CANVAS_H;
+            rctx0.clearRect(0, 0, BASE_CANVAS_W, BASE_CANVAS_H);
+            rctx1.clearRect(0, 0, BASE_CANVAS_W, BASE_CANVAS_H);
+            ocCtxs = [rctx0, rctx1];
+            ocRemoteStrokeState.clear();
+            ocWetBuffers.clear();
+            compositeFrame();
+
+            const total = strokes.length;
+            // Compress to a pleasing timelapse regardless of real drawing time:
+            // ~8ms of playback per op, clamped so tiny drawings still last a
+            // few seconds and epics don't drag past ~18s.
+            const targetMs = Math.min(18000, Math.max(4000, total * 8));
+            let applied = 0, startT = null;
+
+            againBtn.disabled = true;
+            saveBtn.disabled = true;
+
+            if (record) {
+                recordChunks = [];
+                const stream = disp.captureStream(30);
+                recorder = new MediaRecorder(stream, { mimeType: replayVideoMime() });
+                recorder.ondataavailable = e => { if (e.data && e.data.size) recordChunks.push(e.data); };
+                recorder.onstop = () => {
+                    const blob = new Blob(recordChunks, { type: recorder.mimeType });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = `exquisite-corpse-opencanvas-${code}-replay.webm`;
+                    a.click();
+                    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+                    statusEl.textContent = '✓ Video saved';
+                };
+                recorder.start();
+            }
+
+            function frame(t) {
+                if (startT === null) startT = t;
+                const shouldHave = Math.min(total, Math.ceil(((t - startT) / targetMs) * total));
+                while (applied < shouldHave) {
+                    try { applyRemoteDrawOp(strokes[applied]); } catch (e) { /* skip a malformed op */ }
+                    applied++;
+                }
+                compositeFrame();
+                progressEl.style.width = Math.round((applied / total) * 100) + '%';
+                if (applied < total) {
+                    ocReplayRaf = requestAnimationFrame(frame);
+                } else {
+                    ocReplayRaf = null;
+                    againBtn.disabled = false;
+                    saveBtn.disabled = false;
+                    if (!record) statusEl.textContent = 'Done';
+                    if (recorder && recorder.state === 'recording') {
+                        // Let the final frame land in the stream before stopping.
+                        setTimeout(() => recorder.stop(), 250);
+                    }
+                }
+            }
+            statusEl.textContent = record ? 'Recording…' : 'Playing…';
+            ocReplayRaf = requestAnimationFrame(frame);
+        }
+
+        function close() {
+            cleanupReplayState();
+            if (recorder && recorder.state === 'recording') { try { recorder.stop(); } catch (e) {} }
+            overlay.remove();
+        }
+        overlay.querySelector('#ocReplayClose').addEventListener('click', close);
+        overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+        againBtn.addEventListener('click', () => play(false));
+        saveBtn.addEventListener('click', () => play(true));
+
+        // Fetch the op log, then auto-play once.
+        api(`/games/${code}/replay`).then(data => {
+            strokes = data.strokes || [];
+            if (!strokes.length) {
+                statusEl.textContent = 'No replay available for this drawing.';
+                return;
+            }
+            if (replayVideoMime()) saveBtn.classList.remove('hidden');
+            play(false);
+        }).catch(() => {
+            statusEl.textContent = 'Could not load the replay.';
+        });
+    }
+
+    // Picks a supported WebM mime for replay recording, or '' if the browser
+    // can't record a canvas stream (older Safari) — the Save-video button
+    // stays hidden in that case.
+    function replayVideoMime() {
+        if (typeof MediaRecorder === 'undefined' || !HTMLCanvasElement.prototype.captureStream) return '';
+        for (const m of ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']) {
+            if (MediaRecorder.isTypeSupported(m)) return m;
+        }
+        return '';
+    }
+
     function renderOpenCanvasResults() {
         const g = S.game;
         const image = g.canvasImage;
@@ -3942,7 +4151,10 @@
                         <img src="${image}" class="block w-full">
                     </div>
                     <p class="mt-3 text-xs text-gray-500"><b>Artists:</b> ${artists.map(a => escapeHtml(a)).join(', ')}</p>
-                    <div class="grid grid-cols-2 gap-2 mt-3">
+                    <button id="ocReplayBtn" class="mt-3 w-full px-3 py-2.5 bg-[#ffec06] hover:bg-[#e6d405] text-black text-sm font-bold rounded-lg">
+                        ⏱ Watch Replay
+                    </button>
+                    <div class="grid grid-cols-2 gap-2 mt-2">
                         <button id="ocDownloadBtn" class="px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-lg">
                             📥 Download
                         </button>
@@ -3973,6 +4185,7 @@
             </div>
         </div>`;
 
+        document.getElementById('ocReplayBtn').addEventListener('click', () => showOpenCanvasReplay(g.code));
         document.getElementById('ocDownloadBtn').addEventListener('click', () => {
             const a = document.createElement('a');
             a.href = image;

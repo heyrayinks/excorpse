@@ -1052,7 +1052,7 @@ function handleApi(req, res, url) {
     });
   }
 
-  const match = url.pathname.match(/^\/api\/games\/([A-Z0-9]{6})(?:\/(join|start|submit|invite|cancel|finish|open-to-friends))?$/i);
+  const match = url.pathname.match(/^\/api\/games\/([A-Z0-9]{6})(?:\/(join|start|submit|invite|cancel|finish|open-to-friends|replay))?$/i);
   if (!match) return json(res, 404, { error: 'Not found' });
 
   const code = match[1].toUpperCase();
@@ -1064,6 +1064,16 @@ function handleApi(req, res, url) {
   if (req.method === 'GET' && !action) {
     const playerId = url.searchParams.get('playerId') || '';
     return json(res, 200, publicState(game, playerId));
+  }
+
+  // GET /api/games/:code/replay — the full ordered draw-op log for an Open
+  // Canvas game, so the results screen can play it back as a timelapse.
+  // Deliberately NOT part of publicState (which every 2s poll fetches) —
+  // this array can be thousands of ops, so it's fetched once, on demand,
+  // only when someone hits "Watch Replay".
+  if (req.method === 'GET' && action === 'replay') {
+    if (game.mode !== 'opencanvas') return json(res, 400, { error: 'Replay is only for Open Canvas games' });
+    return json(res, 200, { strokes: game.strokes || [] });
   }
 
   // POST /api/games/:code/join { name }
