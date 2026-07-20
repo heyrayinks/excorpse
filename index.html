@@ -107,6 +107,7 @@
         splatSize: 22,
         splatterSize: 35,
         quillSize: 7,
+        presetSizes: {},       // per-preset size overrides for the stamp-engine brushes (defaults live in BRUSH_PRESETS)
         activeLayer: 1,        // 1 = line art (top, default), 0 = background/fill (bottom)
         undoStacks: [[], []],  // per-layer dataURL snapshots (compressed, memory-friendly)
         submittedThisRound: false,
@@ -144,9 +145,9 @@
         pencil: { icon: '/graphics/Exquisite-corpse-tool-icons-02-PENCIL.svg', label: 'Pencil' },
         brush: { icon: '/graphics/Exquisite-corpse-tool-icons-03-BRUSH.svg', label: 'Brush' },
         airbrush: { icon: '/graphics/Exquisite-corpse-tool-icons-07-AIRBRUSH.svg', label: 'Airbrush' },
-        splat: { icon: '/graphics/Exquisite-corpse-tool-icons-08-SPLAT.svg', label: 'Ink Splat', subscriberOnly: true },
-        splatter: { icon: '/graphics/Exquisite-corpse-tool-icons-09-SPLATTER.svg', label: 'Ink Splatter', subscriberOnly: true },
-        quill: { icon: '/graphics/Exquisite-corpse-tool-icons-10-QUILL.svg', label: 'Wet Quill', subscriberOnly: true },
+        splat: { icon: '/graphics/Exquisite-corpse-tool-icons-08-SPLAT.svg', label: 'Ink Splat', subscriberOnly: true, family: 'Ink' },
+        splatter: { icon: '/graphics/Exquisite-corpse-tool-icons-09-SPLATTER.svg', label: 'Ink Splatter', subscriberOnly: true, family: 'Ink' },
+        quill: { icon: '/graphics/Exquisite-corpse-tool-icons-10-QUILL.svg', label: 'Wet Quill', subscriberOnly: true, family: 'Ink' },
         eraser: { icon: '/graphics/Exquisite-corpse-tool-icons-05-ERASER.svg', label: 'Eraser' },
         fill: { icon: '/graphics/Exquisite-corpse-tool-icons-06-FILL.svg', label: 'Fill' },
     };
@@ -161,6 +162,8 @@
         if (tool === 'splat') return { min: 6, max: 70, value: S.splatSize, label: 'Splat size' };
         if (tool === 'splatter') return { min: 10, max: 90, value: S.splatterSize, label: 'Flick radius' };
         if (tool === 'quill') return { min: 1, max: 30, value: S.quillSize, label: 'Quill size' };
+        const preset = typeof BRUSH_PRESETS !== 'undefined' && BRUSH_PRESETS[tool];
+        if (preset) return { min: preset.sizeRange[0], max: preset.sizeRange[1], value: S.presetSizes[tool] ?? preset.size, label: 'Brush size' };
         return { min: 1, max: 40, value: S.penSize, label: 'Pen size' };
     }
     const SECTION_TIPS = {
@@ -528,6 +531,7 @@
         S.splatSize = 22;
         S.splatterSize = 35;
         S.quillSize = 7;
+        S.presetSizes = {};
         S.activeLayer = 1;
     }
 
@@ -1374,13 +1378,8 @@
                         <span id="toolTriggerLabel">${TOOL_META[S.tool].label}</span>
                         <span class="text-gray-400 text-[10px]">▾</span>
                     </button>
-                    <div id="toolMenu" class="hidden absolute left-0 top-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-20 overflow-hidden" style="min-width:150px">
-                        ${Object.entries(TOOL_META).filter(([, meta]) => !meta.subscriberOnly || (S.authToken && S.user && S.user.subscribed)).map(([tool, meta]) => `
-                            <button data-tool="${tool}" class="toolMenuItem w-full text-left px-3 py-2 text-sm font-semibold hover:bg-gray-100 flex items-center gap-2 ${tool === S.tool ? 'bg-gray-100' : ''}">
-                                <img src="${meta.icon}" alt="" class="w-12 h-12 object-contain">
-                                <span>${meta.label}</span>
-                            </button>
-                        `).join('')}
+                    <div id="toolMenu" class="hidden absolute left-0 top-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-20" style="min-width:170px; max-height:60vh; overflow-y:auto">
+                        ${toolMenuHtml()}
                     </div>
                 </div>
                 <span id="brushHint" class="text-xs text-amber-600 font-semibold ${S.tool === 'brush' ? '' : 'hidden'}">🖊️ stylus only</span>
@@ -1799,6 +1798,57 @@
             }
         }
 
+        // ---- Stamp-engine presets (Watercolor family etc.) ----
+        // Dry presets stamp straight onto the active layer. Wet presets stamp
+        // into an offscreen buffer previewed on a transparent overlay canvas,
+        // then composite onto the layer ONCE on lift-off (multiply at the
+        // preset's opacity) — see the engine notes at BRUSH_PRESETS. Both
+        // extra canvases are lazy: players who never pick a wet brush never
+        // pay their memory (full canvas size, 8.4M px at 300 DPI).
+        let presetState = null;   // { residual, dir } for the stroke in flight
+        let wetActive = false;
+        let wetBufferCanvas = null, wetBufferCtx = null;
+        let previewCanvas = null, previewCtx = null;
+        function ensureWetLayers() {
+            if (!wetBufferCanvas) {
+                wetBufferCanvas = document.createElement('canvas');
+                wetBufferCanvas.width = CANVAS_W; wetBufferCanvas.height = CANVAS_H;
+                wetBufferCtx = wetBufferCanvas.getContext('2d');
+            }
+            if (!previewCanvas) {
+                previewCanvas = document.createElement('canvas');
+                previewCanvas.width = CANVAS_W; previewCanvas.height = CANVAS_H;
+                previewCanvas.className = 'layerCanvas block';
+                previewCanvas.style.cssText = 'z-index:3; pointer-events:none';
+                const stack = document.getElementById('canvasStack');
+                const cursorLayer = document.getElementById('ocCursorLayer');
+                if (cursorLayer) stack.insertBefore(previewCanvas, cursorLayer);
+                else stack.appendChild(previewCanvas);
+                previewCtx = previewCanvas.getContext('2d');
+                fitPaper(); // size the new .layerCanvas member to the on-screen scale
+            }
+        }
+        function presetBaseSize(preset) {
+            return (S.presetSizes[S.tool] ?? preset.size) * RENDER_SCALE;
+        }
+        function blitWetPreview(preset) {
+            previewCtx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+            previewCtx.globalAlpha = preset.opacity;
+            previewCtx.drawImage(wetBufferCanvas, 0, 0);
+            previewCtx.globalAlpha = 1;
+        }
+        function finishWetStroke(preset) {
+            const ctx = ctxs[S.activeLayer];
+            ctx.globalCompositeOperation = 'multiply';
+            ctx.globalAlpha = preset.opacity;
+            ctx.drawImage(wetBufferCanvas, 0, 0);
+            ctx.globalAlpha = 1;
+            ctx.globalCompositeOperation = 'source-over';
+            wetBufferCtx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+            previewCtx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+            wetActive = false;
+        }
+
         // Undo snapshots stored as PNG data URLs (~50-200KB each vs 3.7MB raw)
         function pushUndo() {
             const layer = S.activeLayer;
@@ -1839,6 +1889,14 @@
             } else if (S.tool === 'splat') {
                 inkStampSplat(ctxs[S.activeLayer], S.brushColor, splatSizeFor(e), p.x, p.y);
                 lastSplatStamp = p;
+            } else if (BRUSH_PRESETS[S.tool]) {
+                const preset = BRUSH_PRESETS[S.tool];
+                presetState = { residual: 0, dir: undefined };
+                if (preset.wet) { ensureWetLayers(); wetActive = true; }
+                const w = presetWidthFor(preset, presetBaseSize(preset), e);
+                stampAlongSegment(preset.wet ? wetBufferCtx : ctxs[S.activeLayer], S.tool, S.brushColor, p, p, w, w, presetState);
+                if (preset.wet) blitWetPreview(preset);
+                lastWidth = w;
             } else if (S.tool === 'quill') {
                 quillSmooth = null;
                 lastQuillTs = e.timeStamp;
@@ -1894,6 +1952,11 @@
                         inkStampSplat(ctxs[S.activeLayer], S.brushColor, splatSizeFor(ev), p.x, p.y);
                         lastSplatStamp = p;
                     }
+                } else if (BRUSH_PRESETS[S.tool]) {
+                    const preset = BRUSH_PRESETS[S.tool];
+                    const w = presetWidthFor(preset, presetBaseSize(preset), ev);
+                    stampAlongSegment(wetActive ? wetBufferCtx : ctxs[S.activeLayer], S.tool, S.brushColor, last, p, lastWidth, w, presetState);
+                    lastWidth = w;
                 } else if (S.tool === 'quill') {
                     const w = quillWidthFor(ev, p, last);
                     drawSegment(last, p, lastWidth, w);
@@ -1906,6 +1969,8 @@
                 }
                 last = p;
             }
+            // One preview blit per event batch (not per coalesced point)
+            if (wetActive) blitWetPreview(BRUSH_PRESETS[S.tool]);
         });
 
         const stop = e => {
@@ -1919,6 +1984,8 @@
                     // nib sat — a fast flick off the page leaves nothing.
                     inkStampQuillBlob(ctxs[S.activeLayer], S.brushColor, lastWidth * (1.0 + Math.random() * 0.5), last.x, last.y);
                 }
+                if (wetActive && BRUSH_PRESETS[S.tool]) finishWetStroke(BRUSH_PRESETS[S.tool]);
+                presetState = null;
                 activePointer = null;
                 last = null;
             }
@@ -2002,6 +2069,7 @@
             else if (S.tool === 'splat') S.splatSize = val;
             else if (S.tool === 'splatter') S.splatterSize = val;
             else if (S.tool === 'quill') S.quillSize = val;
+            else if (BRUSH_PRESETS[S.tool]) S.presetSizes[S.tool] = val;
             else S.penSize = val;
             document.getElementById('sizeLabel').textContent = val;
         });
@@ -2198,6 +2266,211 @@
         ctx.fill();
     }
 
+    // ---------- PARAMETRIC STAMP ENGINE (subscriber brush families) ----------
+    // One data-driven engine for the Watercolor / Charcoal / Pastel families:
+    // every brush is a row in BRUSH_PRESETS (tip texture, spacing, opacity,
+    // pressure dynamics), rendered by stampAlongSegment() walking the stroke
+    // and stamping cached tinted tip sprites. New brushes are new rows, not
+    // new code — which is what a "new brushes as they release" subscription
+    // needs. Tips are procedural (no assets fetched at runtime); parameter
+    // feel is tuned by eye against Krita/MyPaint's CC0/public-domain preset
+    // packs, but all code here is original — Krita's own engines are GPL C++
+    // and were never copied.
+    //
+    // `wet: true` presets (watercolor washes) don't paint the layer directly:
+    // stamps accumulate in an offscreen "wet buffer" at full strength during
+    // the stroke (previewed on a transparent overlay canvas), then composite
+    // onto the layer ONCE on lift-off with globalAlpha = preset.opacity and
+    // 'multiply' — so a single stroke reads as one even wash with a darker
+    // wet rim, and separate overlapping strokes genuinely darken each other
+    // the way layered watercolor does.
+    const BRUSH_PRESETS = {
+        wc_wash:      { family: 'Watercolor', label: 'Wet Wash',     tip: 'wetDisc',     spacing: 0.35, opacity: 0.38, wet: true,  sizeRange: [8, 80],  size: 30, pressureSize: 0.5, scatter: 0.05, angle: 'none' },
+        wc_bleed:     { family: 'Watercolor', label: 'Soft Bleed',   tip: 'softDisc',    spacing: 0.30, opacity: 0.30, wet: true,  sizeRange: [10, 90], size: 42, pressureSize: 0.5, scatter: 0.18, angle: 'none' },
+        wc_dry:       { family: 'Watercolor', label: 'Dry Brush',    tip: 'toothCoarse', spacing: 0.22, opacity: 0.55, wet: false, sizeRange: [6, 60],  size: 22, pressureSize: 0.6, scatter: 0.04, angle: 'follow' },
+        wc_granulate: { family: 'Watercolor', label: 'Granulating',  tip: 'granDisc',    spacing: 0.35, opacity: 0.42, wet: true,  sizeRange: [8, 80],  size: 32, pressureSize: 0.5, scatter: 0.06, angle: 'none' },
+    };
+    const FAMILY_ICONS = {
+        Watercolor: '/graphics/Exquisite-corpse-tool-icons-11-WATERCOLOR.svg',
+        Charcoal: '/graphics/Exquisite-corpse-tool-icons-12-CHARCOAL.svg',
+        Pastel: '/graphics/Exquisite-corpse-tool-icons-13-PASTEL.svg',
+    };
+    // Presets register into TOOL_META so everything that resolves a tool's
+    // icon/label (trigger button, selectTool, menu) keeps working unchanged.
+    for (const [id, p] of Object.entries(BRUSH_PRESETS)) {
+        TOOL_META[id] = { icon: FAMILY_ICONS[p.family], label: p.label, subscriberOnly: true, family: p.family };
+    }
+
+    // ---- Tip sprite factory ----
+    // Tips are built as black alpha-profile masks, tinted via 'source-in',
+    // and cached per (tip, color, size bucket, variant). All stamping is
+    // drawImage of these cached sprites — never per-stamp path drawing —
+    // which is what keeps textured brushes usable at the 300 DPI canvas.
+    const TIP_VARIANTS = 4; // pre-baked randomizations per textured tip, picked per stamp
+    const tipCache = new Map();
+
+    function buildTipMask(tip, s) {
+        const c = document.createElement('canvas');
+        c.width = c.height = s;
+        const ctx = c.getContext('2d');
+        const half = s / 2;
+        const grad = ctx.createRadialGradient(half, half, 0, half, half, half);
+        if (tip === 'wetDisc' || tip === 'granDisc') {
+            // Interior wash with a stronger ring near the edge — composited,
+            // that ring is the classic watercolor wet rim.
+            grad.addColorStop(0, 'rgba(0,0,0,0.55)');
+            grad.addColorStop(0.65, 'rgba(0,0,0,0.6)');
+            grad.addColorStop(0.85, 'rgba(0,0,0,0.9)');
+            grad.addColorStop(1, 'rgba(0,0,0,0)');
+        } else { // softDisc and the base for toothed tips
+            grad.addColorStop(0, 'rgba(0,0,0,0.9)');
+            grad.addColorStop(0.6, 'rgba(0,0,0,0.6)');
+            grad.addColorStop(1, 'rgba(0,0,0,0)');
+        }
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, s, s);
+
+        // Texture passes carve paper-tooth holes out of the base disc.
+        if (tip === 'granDisc') {
+            ctx.globalCompositeOperation = 'destination-out';
+            const dots = Math.max(12, Math.round(s * s / 60));
+            for (let i = 0; i < dots; i++) {
+                const a = Math.random() * Math.PI * 2;
+                const d = Math.sqrt(Math.random()) * half;
+                ctx.globalAlpha = 0.25 + Math.random() * 0.35;
+                ctx.beginPath();
+                ctx.arc(half + Math.cos(a) * d, half + Math.sin(a) * d, Math.max(0.6, s * (0.02 + Math.random() * 0.05)), 0, Math.PI * 2);
+                ctx.fill();
+            }
+        } else if (tip === 'toothCoarse') {
+            ctx.globalCompositeOperation = 'destination-out';
+            const dots = Math.max(20, Math.round(s * s / 30));
+            for (let i = 0; i < dots; i++) {
+                const a = Math.random() * Math.PI * 2;
+                const d = Math.sqrt(Math.random()) * half;
+                ctx.globalAlpha = 0.5 + Math.random() * 0.5;
+                ctx.beginPath();
+                ctx.arc(half + Math.cos(a) * d, half + Math.sin(a) * d, Math.max(0.8, s * (0.04 + Math.random() * 0.09)), 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = 'source-over';
+        return c;
+    }
+
+    function tipSprite(tip, color, w) {
+        // Bucketed sprite size: sprites are drawn at the bucket size and
+        // drawImage-scaled to the exact stamp width, keeping the cache small.
+        const bucket = Math.max(8, Math.pow(2, Math.ceil(Math.log2(w))));
+        const variant = Math.floor(Math.random() * TIP_VARIANTS);
+        const key = `${tip}|${color}|${bucket}|${variant}`;
+        let sprite = tipCache.get(key);
+        if (!sprite) {
+            if (tipCache.size > 64) tipCache.clear(); // cheap cap; rebuilt lazily
+            const mask = buildTipMask(tip, bucket);
+            const ctx = mask.getContext('2d');
+            ctx.globalCompositeOperation = 'source-in';
+            ctx.fillStyle = color;
+            ctx.fillRect(0, 0, bucket, bucket);
+            sprite = mask;
+            tipCache.set(key, sprite);
+        }
+        return sprite;
+    }
+
+    // ---- The one shared stroke primitive ----
+    // Walks a segment stamping every (spacing x width), carrying leftover
+    // distance in state.residual so stamp cadence is seamless across the
+    // segment boundaries of a polyline. state = { residual, dir } per stroke.
+    function stampAlongSegment(ctx, presetId, color, from, to, fromW, toW, state) {
+        const preset = BRUSH_PRESETS[presetId];
+        const dx = to.x - from.x, dy = to.y - from.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 0.5 && preset.angle === 'follow') {
+            const dir = Math.atan2(dy, dx);
+            if (state.dir === undefined) state.dir = dir;
+            else {
+                let delta = dir - state.dir;
+                while (delta > Math.PI) delta -= Math.PI * 2;
+                while (delta < -Math.PI) delta += Math.PI * 2;
+                state.dir += delta * 0.3; // smoothed so texture doesn't twitch
+            }
+        }
+        const stampAt = (x, y, w) => {
+            const sprite = tipSprite(preset.tip, color, w);
+            ctx.globalCompositeOperation = 'source-over';
+            if (preset.angle === 'follow' && state.dir !== undefined) {
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.rotate(state.dir);
+                ctx.drawImage(sprite, -w / 2, -w / 2, w, w);
+                ctx.restore();
+            } else {
+                ctx.drawImage(sprite, x - w / 2, y - w / 2, w, w);
+            }
+        };
+
+        if (dist < 0.02) { // the "dot on tap" stamp at stroke start
+            stampAt(from.x, from.y, Math.max(1, fromW));
+            state.residual = 0;
+            return;
+        }
+        const step = Math.max(1, preset.spacing * Math.max((fromW + toW) / 2, 2));
+        // Clamp: if the width (and so the step) shrank since the residual was
+        // banked, an oversized residual would otherwise walk pos backwards.
+        let sinceLast = Math.min(state.residual, step); // distance travelled since the last stamp, carried across segments
+        let pos = 0;
+        while (pos + (step - sinceLast) <= dist) {
+            pos += step - sinceLast;
+            sinceLast = 0;
+            const t = pos / dist;
+            const w = Math.max(1, fromW + (toW - fromW) * t);
+            const jitter = preset.scatter * w;
+            stampAt(
+                from.x + dx * t + (Math.random() - 0.5) * 2 * jitter,
+                from.y + dy * t + (Math.random() - 0.5) * 2 * jitter,
+                w
+            );
+        }
+        state.residual = sinceLast + (dist - pos);
+    }
+
+    // Pressure -> stamp width, per preset dynamics. Mouse/touch sit at a
+    // fixed mid pressure like the other tools.
+    function presetWidthFor(preset, baseSize, e) {
+        const p = (e.pointerType === 'pen' && e.pressure > 0) ? e.pressure : 0.5;
+        const factor = (1 - preset.pressureSize) + preset.pressureSize * Math.min(1.6, p * 1.6);
+        return Math.max(1, baseSize * factor);
+    }
+
+    // ---- Grouped tool menu ----
+    // Shared by both engines' toolbars (they previously duplicated the same
+    // inline template). Families render as non-clickable section headers;
+    // headers are omitted entirely when only one family is visible (free and
+    // anonymous users just see the flat Basics list they always had).
+    const TOOL_FAMILY_ORDER = ['Basics', 'Ink', 'Watercolor', 'Charcoal', 'Pastel'];
+    function toolMenuHtml() {
+        const canSub = S.authToken && S.user && S.user.subscribed;
+        const visible = Object.entries(TOOL_META).filter(([, meta]) => !meta.subscriberOnly || canSub);
+        const families = new Map();
+        for (const [tool, meta] of visible) {
+            const fam = meta.family || 'Basics';
+            if (!families.has(fam)) families.set(fam, []);
+            families.get(fam).push([tool, meta]);
+        }
+        const showHeaders = families.size > 1;
+        return TOOL_FAMILY_ORDER.filter(f => families.has(f)).map(fam => `
+            ${showHeaders ? `<div class="px-3 pt-2 pb-0.5 text-[10px] font-bold uppercase tracking-wider text-gray-400 select-none">${fam}</div>` : ''}
+            ${families.get(fam).map(([tool, meta]) => `
+                <button data-tool="${tool}" class="toolMenuItem w-full text-left px-3 py-2 text-sm font-semibold hover:bg-gray-100 flex items-center gap-2 ${tool === S.tool ? 'bg-gray-100' : ''}">
+                    <img src="${meta.icon}" alt="" class="w-12 h-12 object-contain">
+                    <span>${meta.label}</span>
+                </button>
+            `).join('')}
+        `).join('');
+    }
+
     // ---------- OPEN CANVAS (shared live whiteboard) ----------
     // A separate, self-contained drawing engine rather than threading mode
     // checks through setupCanvas() above — that function is round-based and
@@ -2324,8 +2597,22 @@
     let ocSocket = null;
     let ocCtxs = null; // [bottomCtx, topCtx], set by setupOpenCanvasDrawing while the canvas screen is live
     let ocReconnectTimer = null;
-    const ocRemoteStrokeState = new Map(); // player order -> { last:{x,y}, lastWidth }
+    const ocRemoteStrokeState = new Map(); // player order -> { last:{x,y}, lastWidth, preset? }
     const ocCursorEls = new Map();          // player order -> cursor DOM element
+    // Pooled per-player wet buffers for remote watercolor strokes (Open
+    // Canvas is always BASE resolution). A remote wet stroke accumulates in
+    // its player's buffer and composites onto the layer when their 'up' op
+    // arrives — no live preview for remote wet strokes, they appear on lift.
+    const ocWetBuffers = new Map();
+    function ocWetBufferFor(order) {
+        let c = ocWetBuffers.get(order);
+        if (!c) {
+            c = document.createElement('canvas');
+            c.width = BASE_CANVAS_W; c.height = BASE_CANVAS_H;
+            ocWetBuffers.set(order, c);
+        }
+        return c;
+    }
 
     function ocSend(msg) {
         if (ocSocket && ocSocket.readyState === WebSocket.OPEN) {
@@ -2357,6 +2644,50 @@
                 }
             } else if (op.tool === 'quillblob') {
                 inkStampQuillBlob(ctx, op.color, op.size, op.x, op.y);
+            }
+        } else if (op.type === 'stroke' && BRUSH_PRESETS[op.tool]) {
+            // Stamp-engine preset strokes: widths ride the wire, stamp
+            // randomness re-rolls per client (accepted airbrush-style
+            // divergence). Wet presets accumulate in the player's pooled
+            // buffer and composite on their 'up'.
+            const preset = BRUSH_PRESETS[op.tool];
+            const key = op.order;
+            const targetFor = () => {
+                if (!preset.wet) return ctx;
+                return ocWetBufferFor(key).getContext('2d');
+            };
+            if (op.phase === 'down') {
+                const st = { last: { x: op.x, y: op.y }, lastWidth: op.width, preset: { residual: 0, dir: undefined } };
+                ocRemoteStrokeState.set(key, st);
+                const target = targetFor();
+                if (preset.wet) target.clearRect(0, 0, BASE_CANVAS_W, BASE_CANVAS_H);
+                stampAlongSegment(target, op.tool, op.color, { x: op.x, y: op.y }, { x: op.x, y: op.y }, op.width, op.width, st.preset);
+            } else if (op.phase === 'move' && op.points && op.points.length) {
+                let st = ocRemoteStrokeState.get(key);
+                if (!st || !st.preset) {
+                    // Joined mid-stroke: start fresh state (and a fresh buffer,
+                    // in case a dropped stroke left stale paint in the pool).
+                    st = { last: { x: op.points[0].x, y: op.points[0].y }, lastWidth: op.points[0].width, preset: { residual: 0, dir: undefined } };
+                    ocRemoteStrokeState.set(key, st);
+                    if (preset.wet) targetFor().clearRect(0, 0, BASE_CANVAS_W, BASE_CANVAS_H);
+                }
+                const target = targetFor();
+                for (const pt of op.points) {
+                    stampAlongSegment(target, op.tool, op.color, st.last, { x: pt.x, y: pt.y }, st.lastWidth, pt.width, st.preset);
+                    st.last = { x: pt.x, y: pt.y };
+                    st.lastWidth = pt.width;
+                }
+            } else if (op.phase === 'up') {
+                if (preset.wet) {
+                    const buf = ocWetBufferFor(key);
+                    ctx.globalCompositeOperation = 'multiply';
+                    ctx.globalAlpha = preset.opacity;
+                    ctx.drawImage(buf, 0, 0);
+                    ctx.globalAlpha = 1;
+                    ctx.globalCompositeOperation = 'source-over';
+                    buf.getContext('2d').clearRect(0, 0, BASE_CANVAS_W, BASE_CANVAS_H);
+                }
+                ocRemoteStrokeState.delete(key);
             }
         } else if (op.type === 'stroke') {
             const key = op.order;
@@ -2549,13 +2880,8 @@
                         <span id="toolTriggerLabel">${TOOL_META[S.tool].label}</span>
                         <span class="text-gray-400 text-[10px]">▾</span>
                     </button>
-                    <div id="toolMenu" class="hidden absolute left-0 top-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-20 overflow-hidden" style="min-width:150px">
-                        ${Object.entries(TOOL_META).filter(([, meta]) => !meta.subscriberOnly || (S.authToken && S.user && S.user.subscribed)).map(([tool, meta]) => `
-                            <button data-tool="${tool}" class="toolMenuItem w-full text-left px-3 py-2 text-sm font-semibold hover:bg-gray-100 flex items-center gap-2 ${tool === S.tool ? 'bg-gray-100' : ''}">
-                                <img src="${meta.icon}" alt="" class="w-12 h-12 object-contain">
-                                <span>${meta.label}</span>
-                            </button>
-                        `).join('')}
+                    <div id="toolMenu" class="hidden absolute left-0 top-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-20" style="min-width:170px; max-height:60vh; overflow-y:auto">
+                        ${toolMenuHtml()}
                     </div>
                 </div>
                 <span id="brushHint" class="text-xs text-amber-600 font-semibold ${S.tool === 'brush' ? '' : 'hidden'}">🖊️ stylus only</span>
@@ -2815,6 +3141,53 @@
             }
         }
 
+        // ---- Stamp-engine presets (local player; remote peers replay via
+        // applyRemoteDrawOp's preset branch). Same wet-buffer scheme as the
+        // round engine, at Open Canvas's fixed base resolution. ----
+        let presetState = null;
+        let wetActive = false;
+        let wetBufferCanvas = null, wetBufferCtx = null;
+        let previewCanvas = null, previewCtx = null;
+        function ensureWetLayers() {
+            if (!wetBufferCanvas) {
+                wetBufferCanvas = document.createElement('canvas');
+                wetBufferCanvas.width = CANVAS_W; wetBufferCanvas.height = CANVAS_H;
+                wetBufferCtx = wetBufferCanvas.getContext('2d');
+            }
+            if (!previewCanvas) {
+                previewCanvas = document.createElement('canvas');
+                previewCanvas.width = CANVAS_W; previewCanvas.height = CANVAS_H;
+                previewCanvas.className = 'layerCanvas block';
+                previewCanvas.style.cssText = 'z-index:3; pointer-events:none';
+                const stack = document.getElementById('canvasStack');
+                const cursorLayer = document.getElementById('ocCursorLayer');
+                if (cursorLayer) stack.insertBefore(previewCanvas, cursorLayer);
+                else stack.appendChild(previewCanvas);
+                previewCtx = previewCanvas.getContext('2d');
+                fitPaper();
+            }
+        }
+        function presetBaseSize(preset) {
+            return S.presetSizes[S.tool] ?? preset.size;
+        }
+        function blitWetPreview(preset) {
+            previewCtx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+            previewCtx.globalAlpha = preset.opacity;
+            previewCtx.drawImage(wetBufferCanvas, 0, 0);
+            previewCtx.globalAlpha = 1;
+        }
+        function finishWetStroke(preset) {
+            const lctx = ctxs[S.activeLayer];
+            lctx.globalCompositeOperation = 'multiply';
+            lctx.globalAlpha = preset.opacity;
+            lctx.drawImage(wetBufferCanvas, 0, 0);
+            lctx.globalAlpha = 1;
+            lctx.globalCompositeOperation = 'source-over';
+            wetBufferCtx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+            previewCtx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+            wetActive = false;
+        }
+
         let lastCursorSend = 0;
         function sendCursor(p) {
             const now = performance.now();
@@ -2848,6 +3221,19 @@
                 startSplatter(p, e);
             } else if (S.tool === 'splat') {
                 stampAndSendSplat(e, p);
+            } else if (BRUSH_PRESETS[S.tool]) {
+                const preset = BRUSH_PRESETS[S.tool];
+                presetState = { residual: 0, dir: undefined };
+                if (preset.wet) {
+                    ensureWetLayers();
+                    wetActive = true;
+                    wetBufferCtx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+                }
+                const w = presetWidthFor(preset, presetBaseSize(preset), e);
+                stampAlongSegment(preset.wet ? wetBufferCtx : ctxs[S.activeLayer], S.tool, S.brushColor, p, p, w, w, presetState);
+                if (preset.wet) blitWetPreview(preset);
+                lastWidth = w;
+                ocSend({ type: 'stroke', phase: 'down', tool: S.tool, color: S.brushColor, layer: S.activeLayer, x: p.x, y: p.y, width: w });
             } else if (S.tool === 'quill') {
                 quillSmooth = null;
                 lastQuillTs = e.timeStamp;
@@ -2915,15 +3301,22 @@
                     brushStroke.push({ x: p.x, y: p.y, width: w });
                 } else if (S.tool === 'quill') {
                     w = quillWidthFor(ev, p, last);
+                } else if (BRUSH_PRESETS[S.tool]) {
+                    w = presetWidthFor(BRUSH_PRESETS[S.tool], presetBaseSize(BRUSH_PRESETS[S.tool]), ev);
                 } else {
                     w = widthFor(ev);
                 }
-                ocDrawSegment(ctxs[S.activeLayer], S.tool, S.brushColor, last, p, lastWidth, w);
+                if (BRUSH_PRESETS[S.tool]) {
+                    stampAlongSegment(wetActive ? wetBufferCtx : ctxs[S.activeLayer], S.tool, S.brushColor, last, p, lastWidth, w, presetState);
+                } else {
+                    ocDrawSegment(ctxs[S.activeLayer], S.tool, S.brushColor, last, p, lastWidth, w);
+                }
                 if (S.tool === 'quill') quillInkEffects(p, w, false);
                 lastWidth = w;
                 last = p;
                 batch.push({ x: p.x, y: p.y, width: w });
             }
+            if (wetActive) blitWetPreview(BRUSH_PRESETS[S.tool]);
             if (batch.length) {
                 ocSend({ type: 'stroke', phase: 'move', tool: S.tool, color: S.brushColor, layer: S.activeLayer, points: batch });
             }
@@ -2946,6 +3339,12 @@
                         stampAndSendQuillBlob(lastWidth * (1.0 + Math.random() * 0.5), last.x, last.y);
                     }
                     ocSend({ type: 'stroke', phase: 'up', tool: 'quill', color: S.brushColor, layer: S.activeLayer });
+                }
+                if (BRUSH_PRESETS[S.tool]) {
+                    if (wetActive) finishWetStroke(BRUSH_PRESETS[S.tool]);
+                    presetState = null;
+                    // Remote peers composite their pooled buffer on this op
+                    ocSend({ type: 'stroke', phase: 'up', tool: S.tool, color: S.brushColor, layer: S.activeLayer });
                 }
                 activePointer = null;
                 last = null;
@@ -3023,6 +3422,7 @@
             else if (S.tool === 'splat') S.splatSize = val;
             else if (S.tool === 'splatter') S.splatterSize = val;
             else if (S.tool === 'quill') S.quillSize = val;
+            else if (BRUSH_PRESETS[S.tool]) S.presetSizes[S.tool] = val;
             else S.penSize = val;
             document.getElementById('sizeLabel').textContent = val;
         });
