@@ -1313,7 +1313,7 @@ wss.on('connection', (ws, code, player) => {
     const g = games.get(code);
     if (!g || g.status !== 'active') return;
 
-    if (msg.type === 'stroke' || msg.type === 'fill' || msg.type === 'airbrush') {
+    if (msg.type === 'stroke' || msg.type === 'fill' || msg.type === 'airbrush' || msg.type === 'stamp') {
       // Persisted (unlike cursor position) so a late joiner's replay
       // reconstructs the same canvas everyone else is looking at.
       if (g.strokes.length < MAX_STROKE_HISTORY) {
