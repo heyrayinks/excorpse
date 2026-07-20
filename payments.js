@@ -8,6 +8,13 @@ const notify = require('./notify');
 // hardcoding it here would make it visible to anyone browsing GitHub.
 const BETA_CODE = process.env.BETA_CODE || null;
 
+// Code an ALREADY-logged-in member can redeem from the account page to gain
+// subscriber status without Stripe. Defaults to the same BETA_CODE used at
+// signup, but a distinct ACCESS_CODE can be set to hand existing members a
+// different code from the one that also creates beta accounts. Env-only,
+// same reasoning as BETA_CODE.
+const ACCESS_CODE = process.env.ACCESS_CODE || BETA_CODE;
+
 // Validation for signup request
 exports.validateSignupRequest = (body) => {
   const { email, username, password } = body;
@@ -78,6 +85,35 @@ exports.handleBetaSignup = async (body) => {
 
   const token = auth.signToken(user.id);
   return { token, user: account.serializeUser(user) };
+};
+
+// POST /api/account/redeem-code (auth required) — an already-logged-in
+// member redeeming an access code to unlock the subscriber brushes without
+// Stripe. A comp grant, same runtime shape as a beta-subscriber: subscribed
+// with no Stripe linkage, so no webhook ever downgrades it (intended — it's
+// a gift, not a paid subscription). Works even while SUBSCRIPTIONS_ENABLED
+// is off, which is the point: it lets brushes be comped before Stripe is set up.
+exports.redeemAccessCode = async (userId, code) => {
+  if (!ACCESS_CODE) {
+    throw { status: 403, error: 'Access codes are not enabled' };
+  }
+  const user = data.getUserById(userId);
+  if (!user) {
+    throw { status: 404, error: 'User not found' };
+  }
+  if (user.subscribed) {
+    // No-op guard: don't clobber an existing (possibly Stripe-backed)
+    // subscription, and give a clear message instead of silently "succeeding".
+    throw { status: 400, error: "You already have the brushes unlocked" };
+  }
+  if (!code || code.trim().toLowerCase() !== ACCESS_CODE.toLowerCase()) {
+    throw { status: 403, error: 'Invalid access code' };
+  }
+  const updated = await data.updateUser(userId, {
+    subscribed: true,
+    subscriptionStatus: 'active',
+  });
+  return account.serializeUser(updated);
 };
 
 // POST /api/stripe/checkout (auth required) — an already-logged-in, free

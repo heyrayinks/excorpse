@@ -9,6 +9,10 @@ function serializeUser(user) {
     avatarDataUrl: user.avatarDataUrl,
     subscribed: user.subscribed,
     subscriptionStatus: user.subscriptionStatus,
+    // Boolean only (never the id) — lets the UI show "Manage subscription"
+    // solely for real Stripe subscribers, not comped/beta/access-code ones
+    // who have no Stripe billing to manage.
+    stripeSubscription: !!user.stripeSubscriptionId,
     favorites: user.favorites,
     favoritesCount: user.favorites.length,
     friendsCount: user.friends.length,

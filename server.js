@@ -443,6 +443,27 @@ function handleApi(req, res, url) {
     }
   }
 
+  // POST /api/account/redeem-code (auth required) { code } — grants
+  // subscriber status to an existing account via an access code, no Stripe.
+  if (url.pathname === '/api/account/redeem-code' && req.method === 'POST') {
+    try {
+      const userId = auth.extractAndVerifyToken(req);
+      return readBody(req, 10_000, async (err, body) => {
+        if (err) return json(res, 400, { error: err.message });
+        try {
+          const user = await payments.redeemAccessCode(userId, body.code);
+          json(res, 200, { user });
+        } catch (e) {
+          const status = e.status || 500;
+          json(res, status, { error: e.error || e.message });
+        }
+      });
+    } catch (e) {
+      const status = e.status || 500;
+      return json(res, status, { error: e.error || e.message });
+    }
+  }
+
   // POST /api/webhooks/stripe - raw body required for signature verification
   if (url.pathname === '/api/webhooks/stripe' && req.method === 'POST') {
     let rawBody = '';

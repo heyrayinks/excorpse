@@ -4918,15 +4918,26 @@
                     ${S.accountTab === 'settings' ? `
                     <div class="mb-6 border-2 border-gray-100 rounded-xl p-4">
                         <h3 class="text-sm font-semibold text-gray-700 mb-2">🎨 Brush Subscription</h3>
-                        ${!SUBSCRIPTIONS_ENABLED ? `
-                            <p class="text-sm text-gray-500">Subscriptions aren't open yet — 15 subscriber brushes across four families (Ink, Watercolor, Charcoal &amp; Pastel) are ready and will unlock here soon.</p>
-                        ` : u.subscribed ? `
+                        ${u.subscribed ? `
                             <p class="text-sm text-gray-700 mb-1">✓ You're subscribed — 15 brushes across the Ink, Watercolor, Charcoal &amp; Pastel families are in your tool menu, and you'll get new brushes as they launch.</p>
                             ${u.subscriptionStatus === 'past_due' ? `<p class="text-sm text-red-600 mb-3">Your last payment failed — update your card to keep your subscription active.</p>` : ''}
-                            <button id="manageSubBtn" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg">Manage subscription</button>
+                            ${SUBSCRIPTIONS_ENABLED && u.stripeSubscription ? `<button id="manageSubBtn" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg">Manage subscription</button>` : ''}
                         ` : `
-                            <p class="text-sm text-gray-500 mb-3">$2.99/mo — unlocks 15 brushes today across the Ink, Watercolor, Charcoal &amp; Pastel families, plus new brushes as they're released. Cancel anytime; you'll keep the free brush set either way.</p>
-                            <button id="subscribeBtn" class="px-4 py-2 bg-[#ffec06] hover:bg-[#e6d405] text-black text-sm font-semibold rounded-lg">Subscribe</button>
+                            ${!SUBSCRIPTIONS_ENABLED ? `
+                                <p class="text-sm text-gray-500 mb-3">Subscriptions aren't open yet — 15 subscriber brushes across four families (Ink, Watercolor, Charcoal &amp; Pastel) are ready and will unlock here soon.</p>
+                            ` : `
+                                <p class="text-sm text-gray-500 mb-3">$2.99/mo — unlocks 15 brushes today across the Ink, Watercolor, Charcoal &amp; Pastel families, plus new brushes as they're released. Cancel anytime; you'll keep the free brush set either way.</p>
+                                <button id="subscribeBtn" class="px-4 py-2 bg-[#ffec06] hover:bg-[#e6d405] text-black text-sm font-semibold rounded-lg">Subscribe</button>
+                            `}
+                            <div class="mt-4 pt-4 border-t border-gray-100">
+                                <label class="block text-xs font-medium text-gray-500 mb-1">Have an access code?</label>
+                                <div class="flex gap-2">
+                                    <input id="accessCodeInput" type="text" autocomplete="off" placeholder="Enter code"
+                                        class="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-[#ffec06]">
+                                    <button id="redeemCodeBtn" class="px-4 py-2 bg-[#ffec06] hover:bg-[#e6d405] text-black text-sm font-semibold rounded-lg whitespace-nowrap">Redeem</button>
+                                </div>
+                                <p id="accessCodeMsg" class="text-xs mt-1"></p>
+                            </div>
                         `}
                     </div>
 
@@ -5134,6 +5145,34 @@
                     alert('Could not open billing portal: ' + e.message);
                 }
             });
+        }
+        const redeemCodeBtn = document.getElementById('redeemCodeBtn');
+        if (redeemCodeBtn) {
+            const codeInput = document.getElementById('accessCodeInput');
+            const codeMsg = document.getElementById('accessCodeMsg');
+            const doRedeem = async () => {
+                const code = codeInput.value.trim();
+                if (!code) return;
+                redeemCodeBtn.disabled = true;
+                redeemCodeBtn.textContent = 'Redeeming...';
+                codeMsg.textContent = '';
+                try {
+                    const { user } = await authApi('/account/redeem-code', { method: 'POST', body: JSON.stringify({ code }) });
+                    S.user = user;
+                    codeMsg.className = 'text-xs mt-1 text-green-600 font-semibold';
+                    codeMsg.textContent = '✓ Code accepted — your brushes are unlocked!';
+                    // Re-render so the card flips to the subscribed state; the
+                    // subscriber brushes appear the next time a draw screen opens.
+                    setTimeout(() => render(), 1000);
+                } catch (e) {
+                    redeemCodeBtn.disabled = false;
+                    redeemCodeBtn.textContent = 'Redeem';
+                    codeMsg.className = 'text-xs mt-1 text-red-600';
+                    codeMsg.textContent = e.message;
+                }
+            };
+            redeemCodeBtn.addEventListener('click', doRedeem);
+            codeInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doRedeem(); } });
         }
         document.getElementById('saveUsernameBtn').addEventListener('click', async () => {
             const newUsername = document.getElementById('usernameInput').value.trim();
