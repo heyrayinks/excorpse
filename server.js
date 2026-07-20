@@ -46,6 +46,58 @@ function creditFromFilename(filename) {
 // ===== In-memory game store =====
 const games = new Map();
 
+// ===== Deploy-survival snapshot =====
+// The games Map is in-memory, so every deploy/restart used to wipe all
+// in-progress games. Railway sends SIGTERM before replacing the container:
+// we serialize the whole Map to the persistent volume (same dir as
+// users.json) on the way down and restore it on the next boot. Game objects
+// are pure JSON data (no timers or sockets live on them — wsRooms is kept
+// separate and clients auto-reconnect), so a plain stringify round-trip is a
+// faithful restore. Crashes still lose games (no file gets written) — this
+// only makes *graceful* shutdowns non-destructive.
+const GAMES_SNAPSHOT_FILE = path.join(__dirname, 'data', 'games-snapshot.json');
+
+try {
+  if (fs.existsSync(GAMES_SNAPSHOT_FILE)) {
+    const saved = JSON.parse(fs.readFileSync(GAMES_SNAPSHOT_FILE, 'utf8'));
+    for (const g of saved) games.set(g.code, g);
+    console.log(`Restored ${saved.length} game(s) from pre-deploy snapshot`);
+  }
+} catch (e) {
+  console.error('Could not restore games snapshot:', e.message);
+} finally {
+  // Consumed (or poisoned) either way — never let a stale/corrupt snapshot
+  // survive to re-apply on a later boot.
+  try { fs.unlinkSync(GAMES_SNAPSHOT_FILE); } catch (e) { /* didn't exist */ }
+}
+
+let shuttingDown = false;
+function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  try {
+    if (games.size > 0) {
+      // Sync write + tmp-then-rename: the process is about to exit, so async
+      // I/O wouldn't finish, and rename keeps a mid-write crash from leaving
+      // a truncated file for the next boot to choke on.
+      const tmp = GAMES_SNAPSHOT_FILE + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify([...games.values()]));
+      fs.renameSync(tmp, GAMES_SNAPSHOT_FILE);
+      console.log(`${signal}: snapshotted ${games.size} game(s) for the next boot`);
+    }
+  } catch (e) {
+    console.error('Games snapshot failed:', e.message);
+  }
+  process.exit(0);
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+// IPC path: only exists when the server is fork()ed (never in production,
+// where Railway runs `node server.js` directly). Lets local tests on Windows
+// — where an external SIGTERM can't be delivered to a native process —
+// exercise the exact same shutdown function the production signal path uses.
+process.on('message', m => { if (m === 'ec-shutdown') gracefulShutdown('ec-shutdown'); });
+
 // ===== Open Canvas WebSocket rooms =====
 // code -> Set<ws>, one room per game. Lives alongside `games` and is wiped
 // the same way (nothing to persist — a deploy already drops in-progress
