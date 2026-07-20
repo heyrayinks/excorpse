@@ -2289,6 +2289,12 @@
         wc_bleed:     { family: 'Watercolor', label: 'Soft Bleed',   tip: 'softDisc',    spacing: 0.30, opacity: 0.30, wet: true,  sizeRange: [10, 90], size: 42, pressureSize: 0.5, scatter: 0.18, angle: 'none' },
         wc_dry:       { family: 'Watercolor', label: 'Dry Brush',    tip: 'toothCoarse', spacing: 0.22, opacity: 0.55, wet: false, sizeRange: [6, 60],  size: 22, pressureSize: 0.6, scatter: 0.04, angle: 'follow' },
         wc_granulate: { family: 'Watercolor', label: 'Granulating',  tip: 'granDisc',    spacing: 0.35, opacity: 0.42, wet: true,  sizeRange: [8, 80],  size: 32, pressureSize: 0.5, scatter: 0.06, angle: 'none' },
+        // Charcoal: dry stamping, low per-stamp alpha that builds up with
+        // passes, grain carved from the tip, texture rotating with travel.
+        ch_willow:     { family: 'Charcoal', label: 'Willow',          tip: 'toothSoft', spacing: 0.25, opacity: 1, stampAlpha: 0.28, wet: false, sizeRange: [6, 70],  size: 26, pressureSize: 0.45, scatter: 0.06, angle: 'follow' },
+        ch_compressed: { family: 'Charcoal', label: 'Compressed',      tip: 'toothFine', spacing: 0.22, opacity: 1, stampAlpha: 0.7,  wet: false, sizeRange: [4, 60],  size: 18, pressureSize: 0.5,  scatter: 0.04, angle: 'follow' },
+        ch_pencil:     { family: 'Charcoal', label: 'Charcoal Pencil', tip: 'toothFine', spacing: 0.3,  opacity: 1, stampAlpha: 0.55, wet: false, sizeRange: [2, 24],  size: 8,  pressureSize: 0.6,  scatter: 0.03, angle: 'follow' },
+        ch_stick:      { family: 'Charcoal', label: 'Side Stick',      tip: 'flatStick', spacing: 0.15, opacity: 1, stampAlpha: 0.5,  wet: false, sizeRange: [12, 90], size: 40, pressureSize: 0.4,  scatter: 0.02, angle: 'follow' },
     };
     const FAMILY_ICONS = {
         Watercolor: '/graphics/Exquisite-corpse-tool-icons-11-WATERCOLOR.svg',
@@ -2314,21 +2320,45 @@
         c.width = c.height = s;
         const ctx = c.getContext('2d');
         const half = s / 2;
-        const grad = ctx.createRadialGradient(half, half, 0, half, half, half);
-        if (tip === 'wetDisc' || tip === 'granDisc') {
-            // Interior wash with a stronger ring near the edge — composited,
-            // that ring is the classic watercolor wet rim.
-            grad.addColorStop(0, 'rgba(0,0,0,0.55)');
-            grad.addColorStop(0.65, 'rgba(0,0,0,0.6)');
-            grad.addColorStop(0.85, 'rgba(0,0,0,0.9)');
+        if (tip === 'flatStick') {
+            // Tall flat ellipse (long axis vertical): rotated by travel
+            // direction at stamp time, so it drags PERPENDICULAR to the
+            // stroke — the side of a charcoal stick laying down a wide band.
+            ctx.save();
+            ctx.translate(half, half);
+            ctx.scale(0.35, 1);
+            const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, half);
+            grad.addColorStop(0, 'rgba(0,0,0,0.95)');
+            grad.addColorStop(0.85, 'rgba(0,0,0,0.85)');
             grad.addColorStop(1, 'rgba(0,0,0,0)');
-        } else { // softDisc and the base for toothed tips
-            grad.addColorStop(0, 'rgba(0,0,0,0.9)');
-            grad.addColorStop(0.6, 'rgba(0,0,0,0.6)');
-            grad.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.arc(0, 0, half, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        } else {
+            const grad = ctx.createRadialGradient(half, half, 0, half, half, half);
+            if (tip === 'wetDisc' || tip === 'granDisc') {
+                // Interior wash with a stronger ring near the edge — composited,
+                // that ring is the classic watercolor wet rim.
+                grad.addColorStop(0, 'rgba(0,0,0,0.55)');
+                grad.addColorStop(0.65, 'rgba(0,0,0,0.6)');
+                grad.addColorStop(0.85, 'rgba(0,0,0,0.9)');
+                grad.addColorStop(1, 'rgba(0,0,0,0)');
+            } else if (tip === 'toothSoft' || tip === 'toothFine') {
+                // Harder, denser base for dry media — the grain carved below
+                // does the texturing, not the gradient.
+                grad.addColorStop(0, 'rgba(0,0,0,0.95)');
+                grad.addColorStop(0.75, 'rgba(0,0,0,0.8)');
+                grad.addColorStop(1, 'rgba(0,0,0,0)');
+            } else { // softDisc and the base for toothCoarse
+                grad.addColorStop(0, 'rgba(0,0,0,0.9)');
+                grad.addColorStop(0.6, 'rgba(0,0,0,0.6)');
+                grad.addColorStop(1, 'rgba(0,0,0,0)');
+            }
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, s, s);
         }
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, s, s);
 
         // Texture passes carve paper-tooth holes out of the base disc.
         if (tip === 'granDisc') {
@@ -2351,6 +2381,28 @@
                 ctx.globalAlpha = 0.5 + Math.random() * 0.5;
                 ctx.beginPath();
                 ctx.arc(half + Math.cos(a) * d, half + Math.sin(a) * d, Math.max(0.8, s * (0.04 + Math.random() * 0.09)), 0, Math.PI * 2);
+                ctx.fill();
+            }
+        } else if (tip === 'toothSoft' || tip === 'flatStick') {
+            ctx.globalCompositeOperation = 'destination-out';
+            const dots = Math.max(14, Math.round(s * s / 22));
+            for (let i = 0; i < dots; i++) {
+                const a = Math.random() * Math.PI * 2;
+                const d = Math.sqrt(Math.random()) * half;
+                ctx.globalAlpha = 0.3 + Math.random() * 0.4;
+                ctx.beginPath();
+                ctx.arc(half + Math.cos(a) * d, half + Math.sin(a) * d, Math.max(0.6, s * (0.03 + Math.random() * 0.05)), 0, Math.PI * 2);
+                ctx.fill();
+            }
+        } else if (tip === 'toothFine') {
+            ctx.globalCompositeOperation = 'destination-out';
+            const dots = Math.max(18, Math.round(s * s / 14));
+            for (let i = 0; i < dots; i++) {
+                const a = Math.random() * Math.PI * 2;
+                const d = Math.sqrt(Math.random()) * half;
+                ctx.globalAlpha = 0.35 + Math.random() * 0.4;
+                ctx.beginPath();
+                ctx.arc(half + Math.cos(a) * d, half + Math.sin(a) * d, Math.max(0.4, s * (0.015 + Math.random() * 0.03)), 0, Math.PI * 2);
                 ctx.fill();
             }
         }
@@ -2400,6 +2452,10 @@
         const stampAt = (x, y, w) => {
             const sprite = tipSprite(preset.tip, color, w);
             ctx.globalCompositeOperation = 'source-over';
+            // Dry media (charcoal/pastel) stamp translucently and build up
+            // over repeated passes; wet presets stamp at full strength since
+            // their whole stroke gets one opacity pass at composite time.
+            ctx.globalAlpha = preset.stampAlpha ?? 1;
             if (preset.angle === 'follow' && state.dir !== undefined) {
                 ctx.save();
                 ctx.translate(x, y);
@@ -2409,6 +2465,7 @@
             } else {
                 ctx.drawImage(sprite, x - w / 2, y - w / 2, w, w);
             }
+            ctx.globalAlpha = 1;
         };
 
         if (dist < 0.02) { // the "dot on tap" stamp at stroke start
