@@ -115,6 +115,19 @@ function broadcastToRoom(code, senderWs, payload) {
   }
 }
 
+// Push the canonical draw-op log to EVERY client in the room, sender included.
+// Used after undo/clear: those mutate shared history, and the only way peers
+// reliably converge is for all of them to rebuild from the same log. Reuses
+// the 'history' message the client already handles for late joins/reconnects.
+function broadcastHistory(code, game) {
+  const room = wsRooms.get(code);
+  if (!room) return;
+  const data = JSON.stringify({ type: 'history', strokes: game.strokes });
+  for (const client of room) {
+    if (client.readyState === 1 /* OPEN */) client.send(data);
+  }
+}
+
 // Clean up stale games. 'passthrough' games are designed to sit idle between
 // turns for days while a link gets passed along, so they get a much longer
 // cutoff based on last activity rather than the normal 24h-since-created rule.
@@ -1404,6 +1417,26 @@ wss.on('connection', (ws, code, player) => {
       }
       g.lastActivityAt = Date.now();
       broadcastToRoom(code, ws, { ...msg, order: ws.order });
+    } else if (msg.type === 'undo') {
+      // Undo on a shared canvas removes the sender's own last mark, not
+      // whatever happened last — peers are drawing into the same log
+      // concurrently. Ops are grouped by the client-issued `sid`.
+      const mine = g.strokes.filter(op => op.order === ws.order && op.sid);
+      if (!mine.length) return;
+      const lastSid = mine[mine.length - 1].sid;
+      g.strokes = g.strokes.filter(op => !(op.order === ws.order && op.sid === lastSid));
+      g.lastActivityAt = Date.now();
+      // Everyone (sender included) rebuilds from the log. Sending the whole
+      // history reuses the client's existing resync path and guarantees all
+      // peers converge on the same canvas, which patching locally would not.
+      broadcastHistory(code, g);
+    } else if (msg.type === 'clear') {
+      // Creator only — same rule as Finish. Wiping a shared canvas destroys
+      // everyone's work, so it isn't something any joiner can do.
+      if (ws.order !== 1) return;
+      g.strokes = [];
+      g.lastActivityAt = Date.now();
+      broadcastHistory(code, g);
     } else if (msg.type === 'cursor') {
       broadcastToRoom(code, ws, { type: 'cursor', order: ws.order, x: msg.x, y: msg.y });
     }

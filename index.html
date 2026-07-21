@@ -2386,9 +2386,30 @@
         return c;
     }
 
+    // Every persisted op carries a stroke id. Undo on a SHARED canvas can't be
+    // "drop the last op" — peers are drawing into the same log at the same
+    // time — so the server needs to know which ops belong to one mark by one
+    // person. A stroke spans down/move/up (and airbrush fires many ops while
+    // held); one-shot marks like fill get an id of their own.
+    let ocStrokeSid = null;
+    function ocNewStrokeSid() {
+        ocStrokeSid = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+        return ocStrokeSid;
+    }
+    // Only ops that get persisted to the log are tagged; control messages
+    // (cursor, undo, clear) must not be, or they'd mint a stroke id and the
+    // next real mark would inherit it.
+    const OC_PERSISTED_OPS = new Set(['stroke', 'fill', 'airbrush', 'stamp']);
     function ocSend(msg) {
         if (ocSocket && ocSocket.readyState === WebSocket.OPEN) {
+            if (OC_PERSISTED_OPS.has(msg.type)) {
+                // 'down' opens a new mark; a one-shot op with nothing open gets
+                // its own id rather than joining whatever came before it.
+                const sid = (msg.phase === 'down' || !ocStrokeSid) ? ocNewStrokeSid() : ocStrokeSid;
+                msg = { ...msg, sid };
+            }
             ocSocket.send(JSON.stringify(msg));
+            if (msg.phase === 'up') ocStrokeSid = null;
         }
     }
 
@@ -2398,7 +2419,10 @@
 
     function applyRemoteDrawOp(op) {
         if (!ocCtxs) return;
-        const ctx = ocCtxs[op.layer === 0 ? 0 : 1];
+        // Clamp rather than trust the wire: a peer on a different build (or an
+        // older op in a restored snapshot) can name a layer this client hasn't
+        // got, and silently dropping their stroke would desync the canvas.
+        const ctx = ocCtxs[Math.min(ocCtxs.length - 1, Math.max(0, op.layer | 0))];
         if (op.type === 'fill') {
             floodFill(ctx, Math.round(op.x), Math.round(op.y), op.color);
         } else if (op.type === 'airbrush') {
@@ -2539,10 +2563,7 @@
                 // Clears first — a reconnect replays the server's full log again,
                 // and drawing it on top of what's already there would double
                 // every stroke instead of just resyncing to the canonical state.
-                if (ocCtxs) {
-                    ocCtxs[0].clearRect(0, 0, CANVAS_W, CANVAS_H);
-                    ocCtxs[1].clearRect(0, 0, CANVAS_W, CANVAS_H);
-                }
+                if (ocCtxs) ocCtxs.forEach(c => c.clearRect(0, 0, CANVAS_W, CANVAS_H));
                 ocRemoteStrokeState.clear();
                 (msg.strokes || []).forEach(applyRemoteDrawOp);
             } else if (msg.type === 'cursor') {
@@ -2703,6 +2724,12 @@
                     <input id="sizeSlider" type="range" min="${sizeCfg.min}" max="${sizeCfg.max}" value="${sizeCfg.value}" class="w-24">
                     <span id="sizeLabel" class="text-xs text-gray-500 w-5">${sizeCfg.value}</span>
                 </div>
+                <div class="h-6 border-l border-gray-300"></div>
+                <div class="flex items-center gap-1.5">
+                    <button id="ocUndoBtn" class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold rounded-lg" title="Undo your last mark">↶ Undo</button>
+                    ${g.you && g.you.order === 1 ? `
+                    <button id="ocClearBtn" class="px-3 py-1.5 bg-orange-100 hover:bg-orange-200 text-orange-700 text-sm font-semibold rounded-lg" title="Clear the whole canvas (everyone's work)">Clear</button>` : ''}
+                </div>
             </div>
 
             <!-- Paper -->
@@ -2710,7 +2737,10 @@
                 <div id="paperWrap" class="shadow-xl" style="width:fit-content">
                     <div id="canvasStack" class="relative bg-white border-2 border-gray-300">
                         ${layerCanvasHtml()}
-                        <div id="ocCursorLayer" class="absolute inset-0" style="z-index:3; pointer-events:none"></div>
+                        <!-- Above every drawing layer AND the wet preview
+                             (LAYER_COUNT + 1), or peers' cursors end up buried
+                             under the top layer. -->
+                        <div id="ocCursorLayer" class="absolute inset-0" style="z-index:${LAYER_COUNT + 2}; pointer-events:none"></div>
                     </div>
                 </div>
             </div>
@@ -3139,6 +3169,11 @@
                 }
                 activePointer = null;
                 last = null;
+                // Close the mark for undo purposes. Not every tool sends an
+                // 'up' phase (airbrush and the stamp tools just stop firing),
+                // so without this the next press would join the previous one
+                // and a single undo would remove both.
+                ocStrokeSid = null;
             }
         };
         topCanvas.addEventListener('pointerup', stop);
@@ -3195,6 +3230,37 @@
                 });
             });
         });
+
+        // ---- Undo / Clear ----
+        // Unlike the round modes, these can't act on the local canvas: it's
+        // shared, so restoring a local snapshot would wipe out whatever peers
+        // drew in the meantime. Both go to the server, which mutates the
+        // canonical op log and pushes it back to everyone to rebuild from.
+        function ocUndo() {
+            if (!ocSocket || ocSocket.readyState !== WebSocket.OPEN) return;
+            ocSend({ type: 'undo' });
+        }
+        document.getElementById('ocUndoBtn').addEventListener('click', ocUndo);
+
+        document.onkeydown = e => {
+            if (S.screen !== 'canvas') return;
+            if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+                e.preventDefault();
+                ocUndo();
+            }
+        };
+
+        const ocClearBtn = document.getElementById('ocClearBtn'); // creator only
+        if (ocClearBtn) {
+            ocClearBtn.addEventListener('click', async () => {
+                const ok = await showConfirmModal({
+                    title: 'Clear the canvas?',
+                    message: "This wipes the whole drawing for everyone in the game, including other artists' work. It can't be undone.",
+                    confirmLabel: 'Clear everything',
+                });
+                if (ok) ocSend({ type: 'clear' });
+            });
+        }
 
         function selectColor(color) {
             S.brushColor = color;
@@ -3601,13 +3667,15 @@
         const againBtn = overlay.querySelector('#ocReplayAgain');
         const saveBtn = overlay.querySelector('#ocReplaySave');
 
-        // Offscreen layer pair the shared renderer draws into (bottom/top,
-        // same as the live canvas), composited onto the visible canvas.
-        const c0 = document.createElement('canvas'); c0.width = BASE_CANVAS_W; c0.height = BASE_CANVAS_H;
-        const c1 = document.createElement('canvas'); c1.width = BASE_CANVAS_W; c1.height = BASE_CANVAS_H;
-        const rctx0 = c0.getContext('2d', { willReadFrequently: true });
-        const rctx1 = c1.getContext('2d', { willReadFrequently: true });
-        [rctx0, rctx1].forEach(c => { c.lineCap = 'round'; c.lineJoin = 'round'; });
+        // Offscreen layer stack the shared renderer draws into (same count and
+        // order as the live canvas), composited onto the visible canvas.
+        const rCanvases = Array.from({ length: LAYER_COUNT }, () => {
+            const c = document.createElement('canvas');
+            c.width = BASE_CANVAS_W; c.height = BASE_CANVAS_H;
+            return c;
+        });
+        const rCtxs = rCanvases.map(c => c.getContext('2d', { willReadFrequently: true }));
+        rCtxs.forEach(c => { c.lineCap = 'round'; c.lineJoin = 'round'; });
 
         let strokes = null;
         let recorder = null, recordChunks = null;
@@ -3615,8 +3683,7 @@
         function compositeFrame() {
             dispCtx.fillStyle = '#ffffff';
             dispCtx.fillRect(0, 0, BASE_CANVAS_W, BASE_CANVAS_H);
-            dispCtx.drawImage(c0, 0, 0);
-            dispCtx.drawImage(c1, 0, 0);
+            for (const c of rCanvases) dispCtx.drawImage(c, 0, 0);
         }
 
         function cleanupReplayState() {
@@ -3635,9 +3702,8 @@
             // renderer reads (floodFill, wet buffers) at it, and aim ocCtxs
             // at our offscreen layers.
             CANVAS_W = BASE_CANVAS_W; CANVAS_H = BASE_CANVAS_H;
-            rctx0.clearRect(0, 0, BASE_CANVAS_W, BASE_CANVAS_H);
-            rctx1.clearRect(0, 0, BASE_CANVAS_W, BASE_CANVAS_H);
-            ocCtxs = [rctx0, rctx1];
+            rCtxs.forEach(c => c.clearRect(0, 0, BASE_CANVAS_W, BASE_CANVAS_H));
+            ocCtxs = rCtxs;
             ocRemoteStrokeState.clear();
             ocWetBuffers.clear();
             compositeFrame();
