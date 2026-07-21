@@ -154,26 +154,26 @@ const BRUSH_PRESETS = {
     // broad-nib hold), so direction changes modulate the line the way they do
     // on paper. Replaced the old Wet Quill, whose speed-driven width plus ink
     // pooling read as blobby rather than as a pen.
-    ink_nib:      { family: 'Ink', label: 'Chisel Nib', nib: true, nibAngle: -0.7, wet: false, sizeRange: [3, 34], size: 11, pressureSize: 0.35 },
-    wc_wash:      { family: 'Watercolor', label: 'Wet Wash',     tip: 'wetDisc',     spacing: 0.18, opacity: 0.38, wet: true,  rim: 2.2, rimWidth: 4,  sizeRange: [8, 80],  size: 30, pressureSize: 0.5, scatter: 0.05, angle: 'none' },
-    wc_bleed:     { family: 'Watercolor', label: 'Soft Bleed',   tip: 'softDisc',    spacing: 0.16, opacity: 0.30, wet: true,  rim: 0.8, rimWidth: 10, sizeRange: [10, 90], size: 42, pressureSize: 0.5, scatter: 0.08, angle: 'none' },
-    wc_dry:       { family: 'Watercolor', label: 'Dry Brush',    rake: true, grains: 46, tooth: 0.75, grit: 0.42, gritScale: 0.13, stampAlpha: 0.62, wet: false, sizeRange: [6, 60],  size: 22, pressureSize: 0.6 },
-    wc_granulate: { family: 'Watercolor', label: 'Granulating',  tip: 'granDisc',    spacing: 0.18, opacity: 0.42, wet: true,  rim: 1.8, rimWidth: 4, granulate: 0.85, sizeRange: [8, 80],  size: 32, pressureSize: 0.5, scatter: 0.06, angle: 'none' },
+    ink_nib:      { family: 'Ink', label: 'Chisel Nib', nib: true, nibAngle: -0.7, wet: false, sizeRange: [3, 34], size: 11, pressureSize: 0.5 },
+    wc_wash:      { family: 'Watercolor', label: 'Wet Wash',     tip: 'wetDisc',     spacing: 0.18, opacity: 0.38, wet: true,  rim: 2.2, rimWidth: 4,  sizeRange: [8, 80],  size: 30, pressureSize: 0.75, scatter: 0.05, angle: 'none' },
+    wc_bleed:     { family: 'Watercolor', label: 'Soft Bleed',   tip: 'softDisc',    spacing: 0.16, opacity: 0.30, wet: true,  rim: 0.8, rimWidth: 10, sizeRange: [10, 90], size: 42, pressureSize: 0.7, scatter: 0.08, angle: 'none' },
+    wc_dry:       { family: 'Watercolor', label: 'Dry Brush',    rake: true, grains: 46, tooth: 0.75, grit: 0.42, gritScale: 0.13, stampAlpha: 0.62, wet: false, sizeRange: [6, 60],  size: 22, pressureSize: 0.8 },
+    wc_granulate: { family: 'Watercolor', label: 'Granulating',  tip: 'granDisc',    spacing: 0.18, opacity: 0.42, wet: true,  rim: 1.8, rimWidth: 4, granulate: 0.85, sizeRange: [8, 80],  size: 32, pressureSize: 0.75, scatter: 0.06, angle: 'none' },
     // Charcoal and Pastel are all dragged tips (rake: true) — see
     // rakeAlongSegment. `grains` is roughly how many ridges touch the paper,
     // `grit`/`gritScale` how readily they lift and how fine the resulting
     // break-up is. A high grit with few grains is a bald, scratchy stick; a low
     // grit with many is a dense soft one.
-    ch_willow:     { family: 'Charcoal', label: 'Willow',          rake: true, grains: 44, tooth: 0.8, grit: 0.34, gritScale: 0.10, stampAlpha: 0.34, wet: false, sizeRange: [6, 70],  size: 26, pressureSize: 0.45 },
-    ch_compressed: { family: 'Charcoal', label: 'Compressed',      rake: true, grains: 60, tooth: 0.55, grit: 0.16, gritScale: 0.07, stampAlpha: 0.72, wet: false, sizeRange: [4, 60],  size: 18, pressureSize: 0.5 },
-    ch_pencil:     { family: 'Charcoal', label: 'Charcoal Pencil', rake: true, grains: 22, tooth: 0.35, grit: 0.22, gritScale: 0.16, stampAlpha: 0.6,  wet: false, sizeRange: [2, 24],  size: 8,  pressureSize: 0.6 },
-    ch_stick:      { family: 'Charcoal', label: 'Side Stick',      rake: true, grains: 72, tooth: 0.85, grit: 0.40, gritScale: 0.06, stampAlpha: 0.52, wet: false, sizeRange: [12, 90], size: 40, pressureSize: 0.4 },
+    ch_willow:     { family: 'Charcoal', label: 'Willow',          rake: true, grains: 44, tooth: 0.8, grit: 0.34, gritScale: 0.10, stampAlpha: 0.34, wet: false, sizeRange: [6, 70],  size: 26, pressureSize: 0.7 },
+    ch_compressed: { family: 'Charcoal', label: 'Compressed',      rake: true, grains: 60, tooth: 0.55, grit: 0.16, gritScale: 0.07, stampAlpha: 0.72, wet: false, sizeRange: [4, 60],  size: 18, pressureSize: 0.75 },
+    ch_pencil:     { family: 'Charcoal', label: 'Charcoal Pencil', rake: true, grains: 22, tooth: 0.35, grit: 0.22, gritScale: 0.16, stampAlpha: 0.6,  wet: false, sizeRange: [2, 24],  size: 8,  pressureSize: 0.8 },
+    ch_stick:      { family: 'Charcoal', label: 'Side Stick',      rake: true, grains: 72, tooth: 0.85, grit: 0.40, gritScale: 0.06, stampAlpha: 0.52, wet: false, sizeRange: [12, 90], size: 40, pressureSize: 0.6 },
     // Pastel: waxy/chalky, with the colour wobble now carried per contact
     // ridge rather than per stamp.
-    op_soft:    { family: 'Pastel', label: 'Soft Pastel', rake: true, grains: 50, tooth: 0.7, grit: 0.30, gritScale: 0.09, stampAlpha: 0.72, colorJitter: 0.05, wet: false, sizeRange: [6, 70],  size: 24, pressureSize: 0.5 },
-    op_heavy:   { family: 'Pastel', label: 'Oil Pastel',  rake: true, grains: 66, tooth: 0.4, grit: 0.12, gritScale: 0.05, stampAlpha: 0.92, colorJitter: 0.07, wet: false, sizeRange: [6, 70],  size: 26, pressureSize: 0.5 },
-    op_scumble: { family: 'Pastel', label: 'Scumble',     rake: true, grains: 32, tooth: 0.85, grit: 0.55, gritScale: 0.15, stampAlpha: 0.6,  colorJitter: 0.06, wet: false, sizeRange: [10, 90], size: 40, pressureSize: 0.4 },
-    op_chalk:   { family: 'Pastel', label: 'Chalk',       rake: true, grains: 46, tooth: 0.8, grit: 0.38, gritScale: 0.11, stampAlpha: 0.44, colorJitter: 0.08, wet: false, sizeRange: [6, 70],  size: 26, pressureSize: 0.5 },
+    op_soft:    { family: 'Pastel', label: 'Soft Pastel', rake: true, grains: 50, tooth: 0.7, grit: 0.30, gritScale: 0.09, stampAlpha: 0.72, colorJitter: 0.05, wet: false, sizeRange: [6, 70],  size: 24, pressureSize: 0.72 },
+    op_heavy:   { family: 'Pastel', label: 'Oil Pastel',  rake: true, grains: 66, tooth: 0.4, grit: 0.12, gritScale: 0.05, stampAlpha: 0.92, colorJitter: 0.07, wet: false, sizeRange: [6, 70],  size: 26, pressureSize: 0.7 },
+    op_scumble: { family: 'Pastel', label: 'Scumble',     rake: true, grains: 32, tooth: 0.85, grit: 0.55, gritScale: 0.15, stampAlpha: 0.6,  colorJitter: 0.06, wet: false, sizeRange: [10, 90], size: 40, pressureSize: 0.6 },
+    op_chalk:   { family: 'Pastel', label: 'Chalk',       rake: true, grains: 46, tooth: 0.8, grit: 0.38, gritScale: 0.11, stampAlpha: 0.44, colorJitter: 0.08, wet: false, sizeRange: [6, 70],  size: 26, pressureSize: 0.72 },
 };
 
 
@@ -460,9 +460,19 @@ function rakeNoise(seed, t) {
     return a + (b - a) * u;
 }
 
-function makeRakeTip(preset, color) {
-    const target = preset.grains || 22;
+// `width` is the tip's actual width in canvas px for this stroke. Ridge count
+// has to follow it: `grains` is tuned for the preset's default size, and at
+// writing scale (a 5px tip) that many ridges collapse into an illegible smear
+// of sub-pixel lines. Roughly one ridge per 1.1px of tip keeps the texture at
+// the same physical density whatever size the brush is set to.
+function makeRakeTip(preset, color, width) {
+    const target = Math.max(5, Math.min(preset.grains || 22, Math.round((width || 30) / 1.1)));
     const count = Math.max(4, Math.round(target * (0.7 + Math.random() * 0.6)));
+    // `w` below is a fraction of tip width, tuned for a full-size tip's ridge
+    // count. Scaling the count down for a fine tip without widening each ridge
+    // just makes a faint smear — a fine tip's ridges ARE a bigger share of its
+    // width. Keeps total coverage roughly constant across sizes.
+    const wScale = Math.max(1, Math.min(4, 26 / count));
     // A tip's contact points aren't evenly spread — they clump, which is why a
     // dry stroke has dense passages and bald ones. Bias positions toward a few
     // random clusters rather than sampling the width uniformly.
@@ -491,7 +501,7 @@ function makeRakeTip(preset, color) {
             // segment are slabs, and a stroke built from slabs looks like
             // masonry — that was the blockiness. Coverage comes from having
             // many fine ridges instead of a few fat ones.
-            w: 0.012 + Math.pow(Math.random(), 2) * 0.05,  // line width, fraction of stroke width
+            w: (0.012 + Math.pow(Math.random(), 2) * 0.05) * wScale,  // fraction of tip width
             a: (0.2 + Math.random() * 0.8) * (fringe ? 0.45 : 1),
             seed: Math.random() * 1000,
             // Clamped so the coarse octave's period stays above ~10px, well
@@ -515,11 +525,14 @@ function makeRakeTip(preset, color) {
 function rakeAlongSegment(ctx, presetId, color, from, to, fromW, toW, state) {
     const preset = BRUSH_PRESETS[presetId];
     if (!state.grains) {
-        state.grains = makeRakeTip(preset, color);
+        state.grains = makeRakeTip(preset, color, Math.max(fromW, toW));
         state.dist = 0;
     }
     const dx = to.x - from.x, dy = to.y - from.y;
     const dist = Math.hypot(dx, dy);
+
+    const tf = taperFactor(state, Math.max(fromW, toW));
+    fromW *= tf; toW *= tf;
 
     // Direction is smoothed exactly as the stamp walker smooths it, so the rake
     // doesn't twitch on noisy pointer samples and swing the whole grain pattern.
@@ -548,12 +561,16 @@ function rakeAlongSegment(ctx, presetId, color, from, to, fromW, toW, state) {
 
     ctx.save();
     ctx.globalCompositeOperation = 'source-over';
-    // Round caps are safe again now that ridges are thin: a cap on a 1-2px
-    // line is a 1-2px dot, not the blob that forced butt caps earlier. Butt
-    // caps on a short segment draw a hard-cornered rectangle, and a stroke
-    // built from those reads as masonry — which is exactly what it looked
-    // like. Round caps also soften where a ridge drops out.
-    ctx.lineCap = 'round';
+    // BUTT caps + round joins, and — critically — ONE stroke() per ridge per
+    // segment rather than one per sub-step. Each ridge draws at alpha < 1, so
+    // sub-steps stroked separately double-composite where their caps overlap,
+    // laying down a darker mark every 2px along every ridge. Across parallel
+    // ridges those line up into rungs across the stroke: the grid/checkerboard
+    // that showed up when writing at text size. Stroking one continuous path
+    // has no internal overlap at all, and butt ends abut the next segment's
+    // cleanly since the offsets match.
+    ctx.lineCap = 'butt';
+    ctx.lineJoin = 'round';
     const baseAlpha = preset.stampAlpha ?? 1;
     const tooth = preset.tooth || 0;
 
@@ -580,16 +597,14 @@ function rakeAlongSegment(ctx, presetId, color, from, to, fromW, toW, state) {
         // per-piece modulation: tonal variety comes from grains differing and
         // from the paper, both decorrelated, neither periodic.
         ctx.strokeStyle = g.color;
-        ctx.lineWidth = Math.max(0.35, g.w * (fromW + toW) / 2);
+        ctx.lineWidth = Math.max(0.6, g.w * (fromW + toW) / 2);
+        ctx.globalAlpha = Math.min(1, g.a * baseAlpha);
+        ctx.beginPath();
+        let open = false, drew = false;
 
         for (let s = 0; s < subs; s++) {
             const ta = s / subs, tb = (s + 1) / subs;
             const da = d0 + (d1 - d0) * ta, db = d0 + (d1 - d0) * tb;
-
-            const n = rakeNoise(g.seed, db * g.freq);
-            if (n < g.thresh) continue;           // this ridge is off the paper here
-            // Fade in near the threshold so grains dissolve rather than blink.
-            const contact = Math.min(1, (n - g.thresh) / 0.25);
 
             const wa = fromW + (toW - fromW) * ta, wb = fromW + (toW - fromW) * tb;
             const oa = (g.off + Math.sin(da * g.wander + g.seed) * 0.04) * wa;
@@ -598,21 +613,21 @@ function rakeAlongSegment(ctx, presetId, color, from, to, fromW, toW, state) {
             const ax = from.x + dx * ta + px * oa, ay = from.y + dy * ta + py * oa;
             const bx = from.x + dx * tb + px * ob, by = from.y + dy * tb + py * ob;
 
-            // Paper tooth, sampled at this ridge's actual position on the sheet
-            // — so overlapping passes catch the same tooth.
-            let tone = 1;
-            if (tooth) {
-                const t = paperTooth((ax + bx) / 2, (ay + by) / 2);
-                if (t < tooth * 0.34) continue;   // a hollow: the tip misses it
-                tone = 1 - tooth + tooth * t * 1.6;
-            }
+            // Both grit and paper tooth are pure GATES now — they decide
+            // whether this ridge is touching here, not how dark it is. Alpha
+            // has to stay constant across the path for it to be one stroke(),
+            // and gating is the truer model anyway: a ridge either reaches the
+            // paper or skips over a hollow. Tone still varies, via the grains
+            // themselves differing and via where the gaps land.
+            const lifted = rakeNoise(g.seed, db * g.freq) < g.thresh;
+            const inHollow = tooth && paperTooth((ax + bx) / 2, (ay + by) / 2) < tooth * 0.42;
 
-            ctx.globalAlpha = Math.min(1, g.a * baseAlpha * contact * tone);
-            ctx.beginPath();
-            ctx.moveTo(ax - ex, ay - ey);
+            if (lifted || inHollow) { open = false; continue; }
+            if (!open) { ctx.moveTo(ax - ex, ay - ey); open = true; }
             ctx.lineTo(bx + ex, by + ey);
-            ctx.stroke();
+            drew = true;
         }
+        if (drew) ctx.stroke();
     }
     ctx.restore();
     state.dist = d1;
@@ -666,6 +681,18 @@ function nibAlongSegment(ctx, presetId, color, from, to, fromW, toW, state) {
     state.residual = 0;
 }
 
+// Entry taper. Real media doesn't arrive at full width — the tip lands and
+// loads over the first few millimetres. Without this every preset mark starts
+// with a blunt, machine-cut end, which is a big part of why they read as
+// uniform sausages next to the legacy Brush tool (which has always tapered).
+// Driven by distance travelled, so it's identical on remote replay and needs
+// nothing on the wire. Taper-OUT would need lift lookahead the dry engines
+// don't have — see BRUSH_ENGINE_PLAN.md.
+function taperFactor(state, w) {
+    const len = Math.max(5, w * 1.6);
+    return Math.min(1, 0.3 + 0.7 * ((state.dist || 0) / len));
+}
+
 // ---- The one shared stroke primitive ----
 // Walks a segment stamping every (spacing x width), carrying leftover
 // distance in state.residual so stamp cadence is seamless across the
@@ -677,6 +704,10 @@ function stampAlongSegment(ctx, presetId, color, from, to, fromW, toW, state) {
     // swatch harness all pick it up for free.
     if (preset.rake) return rakeAlongSegment(ctx, presetId, color, from, to, fromW, toW, state);
     if (preset.nib) return nibAlongSegment(ctx, presetId, color, from, to, fromW, toW, state);
+    // Stamped (wet) presets track distance too, purely so they can taper in.
+    const tf = taperFactor(state, Math.max(fromW, toW));
+    fromW *= tf; toW *= tf;
+    state.dist = (state.dist || 0) + Math.hypot(to.x - from.x, to.y - from.y);
     const dx = to.x - from.x, dy = to.y - from.y;
     const dist = Math.hypot(dx, dy);
     if (dist > 0.5 && preset.angle === 'follow') {

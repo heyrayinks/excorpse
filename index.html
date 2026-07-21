@@ -3850,17 +3850,11 @@
 
         document.getElementById('ocReplayBtn').addEventListener('click', () => showOpenCanvasReplay(g.code));
         document.getElementById('ocDownloadBtn').addEventListener('click', () => {
-            const a = document.createElement('a');
-            a.href = image;
-            a.download = `exquisite-corpse-opencanvas-${g.code}.png`;
-            a.click();
+            saveImageFile(image, `exquisite-corpse-opencanvas-${g.code}.png`);
         });
         document.getElementById('ocDownloadSocialBtn').addEventListener('click', () => {
             fitToSocialSquare(image).then(dataUrl => {
-                const a = document.createElement('a');
-                a.href = dataUrl;
-                a.download = `exquisite-corpse-opencanvas-${g.code}-social.png`;
-                a.click();
+                saveImageFile(dataUrl, `exquisite-corpse-opencanvas-${g.code}-social.png`);
             });
         });
         const saveFavBtn = document.getElementById('ocSaveFavBtn');
@@ -4142,10 +4136,7 @@
         stitchSheetDataUrl(sheet)
             .then(dataUrl => fitToLetterPage(dataUrl))
             .then(pageDataUrl => {
-                const a = document.createElement('a');
-                a.href = pageDataUrl;
-                a.download = `exquisite-corpse-${S.code || 'game'}-${num}.png`;
-                a.click();
+                saveImageFile(pageDataUrl, `exquisite-corpse-${S.code || 'game'}-${num}.png`);
             });
     }
 
@@ -4192,10 +4183,7 @@
         stitchSheetDataUrl(sheet)
             .then(dataUrl => fitToSocialSquare(dataUrl))
             .then(pageDataUrl => {
-                const a = document.createElement('a');
-                a.href = pageDataUrl;
-                a.download = `exquisite-corpse-${S.code || 'game'}-${num}-social.png`;
-                a.click();
+                saveImageFile(pageDataUrl, `exquisite-corpse-${S.code || 'game'}-${num}-social.png`);
             });
     }
 
@@ -4244,10 +4232,7 @@
         combineSheetsRaw(sheetsToCombine)
             .then(rawDataUrl => fitToLetterPage(rawDataUrl))
             .then(pageDataUrl => {
-                const a = document.createElement('a');
-                a.href = pageDataUrl;
-                a.download = `exquisite-corpse-${S.code || 'game'}-combined.png`;
-                a.click();
+                saveImageFile(pageDataUrl, `exquisite-corpse-${S.code || 'game'}-combined.png`);
             });
     }
 
@@ -4258,11 +4243,45 @@
         combineSheetsRaw(sheetsToCombine)
             .then(rawDataUrl => fitToSocialSquare(rawDataUrl))
             .then(pageDataUrl => {
-                const a = document.createElement('a');
-                a.href = pageDataUrl;
-                a.download = `exquisite-corpse-${S.code || 'game'}-combined-social.png`;
-                a.click();
+                saveImageFile(pageDataUrl, `exquisite-corpse-${S.code || 'game'}-combined-social.png`);
             });
+    }
+
+    // ---- Saving images (iPad-safe) ----
+    // iOS Safari ignores the `download` attribute on a `data:` URL entirely —
+    // the click fires and nothing happens, no error, no save sheet. That's why
+    // downloads silently failed on iPad while working fine on desktop. A
+    // `blob:` URL is honoured, so every save routes through here.
+    //
+    // On iOS we prefer the share sheet when it's available, since that's the
+    // only route that offers "Save to Photos"; it needs a user gesture, so if
+    // the gesture has already been spent (these callers await canvas work
+    // first) it throws and we fall through to the blob download.
+    async function saveImageFile(dataUrl, filename) {
+        const blob = await (await fetch(dataUrl)).blob();
+
+        if (navigator.canShare) {
+            try {
+                const file = new File([blob], filename, { type: blob.type || 'image/png' });
+                if (navigator.canShare({ files: [file] })) {
+                    await navigator.share({ files: [file] });
+                    return;
+                }
+            } catch (e) {
+                if (e && e.name === 'AbortError') return; // user dismissed the sheet
+                // otherwise fall through to the download path
+            }
+        }
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.rel = 'noopener';
+        document.body.appendChild(a);   // Firefox needs it in the document
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 30000);
     }
 
     // Same combine flow, but for pre-stitched favorite images (no re-stitch needed)
@@ -4270,10 +4289,7 @@
         combineCompositesRaw(compositeDataUrls)
             .then(rawDataUrl => fitToLetterPage(rawDataUrl))
             .then(pageDataUrl => {
-                const a = document.createElement('a');
-                a.href = pageDataUrl;
-                a.download = filename;
-                a.click();
+                saveImageFile(pageDataUrl, filename);
             });
     }
 
