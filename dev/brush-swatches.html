@@ -59,6 +59,7 @@ const TESTS = [
 // real medium would most likely be made with.
 const FAMILY_COLOR = {
   Ink:        '#141414',
+  Effects:    '#141414',
   Watercolor: '#2f5d99',
   Charcoal:   '#1c1c1c',
   Pastel:     '#b4472e',
@@ -174,7 +175,7 @@ function renderPresetCell(ctx, presetId, test, ox, oy, color, sheet) {
 // once the pointer has travelled far enough; splatter emits frames on a rAF
 // loop; the quill's width tracks stroke SPEED, pooling blobs where it lingers).
 // The stamps themselves are the production functions.
-const INK_SIZE = { splat: 26, splatter: 40, quill: 7 };
+const INK_SIZE = { splat: 26, splatter: 40 };
 
 function renderInkCell(ctx, tool, test, ox, oy, color) {
   const size = INK_SIZE[tool];
@@ -262,14 +263,16 @@ function taperedSegment(ctx, from, to, fromWidth, toWidth) {
 // Sheet assembly
 // ---------------------------------------------------------------------------
 function brushesByFamily() {
-  const fams = { Ink: ['splat', 'splatter', 'quill'] };
+  // Only the hand-coded one-shot marks are listed by hand now; Chisel Nib is a
+  // preset row and arrives via BRUSH_PRESETS like everything else.
+  const fams = { Effects: ['splat', 'splatter'] };
   for (const [id, p] of Object.entries(BRUSH_PRESETS)) {
     (fams[p.family] = fams[p.family] || []).push(id);
   }
   return fams;
 }
 
-const INK_LABEL = { splat: 'Ink Splat', splatter: 'Ink Splatter', quill: 'Wet Quill' };
+const INK_LABEL = { splat: 'Ink Splat', splatter: 'Ink Splatter' };
 
 function renderSheet(family, brushes) {
   const canvas = document.createElement('canvas');
@@ -331,7 +334,7 @@ function renderSheet(family, brushes) {
 // ---- Run ----
 (async function () {
   const fams = brushesByFamily();
-  const order = ['Ink', 'Watercolor', 'Charcoal', 'Pastel'].filter(f => fams[f]);
+  const order = ['Ink', 'Watercolor', 'Charcoal', 'Pastel', 'Effects'].filter(f => fams[f]);
   const host = document.getElementById('sheets');
   const status = document.getElementById('status');
   const saved = [];

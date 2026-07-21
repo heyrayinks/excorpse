@@ -112,7 +112,7 @@
         quillSize: 7,
         presetSizes: {},       // per-preset size overrides for the stamp-engine brushes (defaults live in BRUSH_PRESETS)
         activeLayer: 1,        // 1 = line art (top, default), 0 = background/fill (bottom)
-        undoStacks: [[], []],  // per-layer dataURL snapshots (compressed, memory-friendly)
+        undoStacks: [],  // per-layer dataURL snapshots, sized to LAYER_COUNT on canvas setup  // per-layer dataURL snapshots (compressed, memory-friendly)
         submittedThisRound: false,
         lastRound: null,
         inspWord: null,        // this round's inspiration word
@@ -148,9 +148,13 @@
         pencil: { icon: '/graphics/Exquisite-corpse-tool-icons-02-PENCIL.svg', label: 'Pencil' },
         brush: { icon: '/graphics/Exquisite-corpse-tool-icons-03-BRUSH.svg', label: 'Brush' },
         airbrush: { icon: '/graphics/Exquisite-corpse-tool-icons-07-AIRBRUSH.svg', label: 'Airbrush' },
-        splat: { icon: '/graphics/Exquisite-corpse-tool-icons-08-SPLAT.svg', label: 'Ink Splat', subscriberOnly: true, family: 'Ink' },
-        splatter: { icon: '/graphics/Exquisite-corpse-tool-icons-09-SPLATTER.svg', label: 'Ink Splatter', subscriberOnly: true, family: 'Ink' },
-        quill: { icon: '/graphics/Exquisite-corpse-tool-icons-10-QUILL.svg', label: 'Wet Quill', subscriberOnly: true, family: 'Ink' },
+        // Splat/Splatter moved out of Ink into Effects: they're one-shot marks
+        // rather than drawing tools, and grouping them with the nib misled
+        // people into expecting an ink SET. Kept (they're shipped subscriber
+        // content) but filed where they belong. Wet Quill was retired outright
+        // in favour of Chisel Nib — its blob pooling never read as a pen.
+        splat: { icon: '/graphics/Exquisite-corpse-tool-icons-08-SPLAT.svg', label: 'Ink Splat', subscriberOnly: true, family: 'Effects' },
+        splatter: { icon: '/graphics/Exquisite-corpse-tool-icons-09-SPLATTER.svg', label: 'Ink Splatter', subscriberOnly: true, family: 'Effects' },
         eraser: { icon: '/graphics/Exquisite-corpse-tool-icons-05-ERASER.svg', label: 'Eraser' },
         fill: { icon: '/graphics/Exquisite-corpse-tool-icons-06-FILL.svg', label: 'Fill' },
     };
@@ -436,6 +440,23 @@
     // (genuinely softer, since the underlying detail is still only 100 DPI), paid
     // drawings already match natively.
     const BASE_CANVAS_W = 850, BASE_CANVAS_H = 1100, BASE_EDGE_H = 40;
+    // Stacked drawing layers, bottom (0) to top. The topmost is always the
+    // pointer target regardless of which layer is active, so the whole stack
+    // is hit-tested as one surface. Layer BUTTONS are labelled top-down (the
+    // top layer reads as "1"), which is the way layer palettes are numbered
+    // everywhere else, while the indices stay bottom-up for z-order.
+    const LAYER_COUNT = 4;
+    const TOP_LAYER = LAYER_COUNT - 1;
+    const emptyUndoStacks = () => Array.from({ length: LAYER_COUNT }, () => []);
+    // Layer markup is generated rather than written out, so the count is a
+    // one-line change. Both engines use these.
+    const layerCanvasHtml = () => Array.from({ length: LAYER_COUNT }, (_, i) =>
+        `<canvas id="layerCanvas${i}" width="${CANVAS_W}" height="${CANVAS_H}" class="layerCanvas block" style="z-index:${i + 1}${i === TOP_LAYER ? '; cursor:crosshair' : ''}"></canvas>`
+    ).join('\n                        ');
+    const layerButtonsHtml = () => Array.from({ length: LAYER_COUNT }, (_, i) => LAYER_COUNT - 1 - i)
+        .map(idx => `<button id="layerBtn${idx}" data-layer="${idx}" class="layerBtn ${idx === TOP_LAYER ? 'active ' : ''}px-2.5 py-1.5 rounded-lg border border-gray-300 text-sm font-semibold" title="${idx === TOP_LAYER ? 'Top layer' : idx === 0 ? 'Bottom layer' : 'Layer ' + (LAYER_COUNT - idx)}">${LAYER_COUNT - idx}</button>`)
+        .join('\n                    ');
+    const layerCanvases = () => Array.from({ length: LAYER_COUNT }, (_, i) => document.getElementById('layerCanvas' + i));
     const PAID_RENDER_SCALE = 3; // 100 DPI -> 300 DPI
     const OUTPUT_W = BASE_CANVAS_W * PAID_RENDER_SCALE;   // 2550 — universal stored/stitched size
     const OUTPUT_H = BASE_CANVAS_H * PAID_RENDER_SCALE;   // 3300
@@ -535,7 +556,7 @@
         S.splatterSize = 35;
         S.quillSize = 7;
         S.presetSizes = {};
-        S.activeLayer = 1;
+        S.activeLayer = TOP_LAYER;
     }
 
     async function joinGame(code, name) {
@@ -1389,8 +1410,7 @@
                 <div class="h-6 border-l border-gray-300"></div>
                 <div class="flex items-center gap-1.5">
                     <span class="text-xs text-gray-500 mr-0.5">Layer</span>
-                    <button id="layerBtn1" data-layer="1" class="layerBtn active px-2.5 py-1.5 rounded-lg border border-gray-300 text-sm font-semibold" title="Line art layer (top)">1</button>
-                    <button id="layerBtn0" data-layer="0" class="layerBtn px-2.5 py-1.5 rounded-lg border border-gray-300 text-sm font-semibold" title="Background layer (bottom)">2</button>
+                    ${layerButtonsHtml()}
                 </div>
                 <div class="h-6 border-l border-gray-300"></div>
                 <div class="flex items-center gap-1.5" id="colorRow">
@@ -1422,8 +1442,7 @@
                         <img id="edgeHintImg" src="${g.edgeHint}" class="block border-2 border-b-0 border-amber-400" style="width:100%">
                         ` : ''}
                     <div id="canvasStack" class="relative bg-white border-2 ${g.edgeHint ? 'border-amber-400 border-t-amber-200' : 'border-gray-300'}">
-                        <canvas id="layerCanvas0" width="${CANVAS_W}" height="${CANVAS_H}" class="layerCanvas block" style="z-index:1"></canvas>
-                        <canvas id="layerCanvas1" width="${CANVAS_W}" height="${CANVAS_H}" class="layerCanvas block" style="z-index:2; cursor:crosshair"></canvas>
+                        ${layerCanvasHtml()}
                     </div>
                 </div>
             </div>
@@ -1481,12 +1500,12 @@
     // Both canvases start transparent — the white "paper" comes from #canvasStack's
     // own background, so erasing on either layer just reveals the paper beneath.
     function setupCanvas() {
-        const canvases = [document.getElementById('layerCanvas0'), document.getElementById('layerCanvas1')];
+        const canvases = layerCanvases();
         const ctxs = canvases.map(c => c.getContext('2d', { willReadFrequently: true }));
         ctxs.forEach(ctx => { ctx.lineCap = 'round'; ctx.lineJoin = 'round'; });
-        S.undoStacks = [[], []];
+        S.undoStacks = emptyUndoStacks();
 
-        const topCanvas = canvases[1]; // always receives pointer events, regardless of active layer
+        const topCanvas = canvases[TOP_LAYER]; // always receives pointer events, regardless of active layer
 
         fitPaper();
         requestAnimationFrame(fitPaper); // re-fit after first layout settles
@@ -1822,7 +1841,7 @@
                 previewCanvas = document.createElement('canvas');
                 previewCanvas.width = CANVAS_W; previewCanvas.height = CANVAS_H;
                 previewCanvas.className = 'layerCanvas block';
-                previewCanvas.style.cssText = 'z-index:3; pointer-events:none';
+                previewCanvas.style.cssText = `z-index:${LAYER_COUNT + 1}; pointer-events:none`;
                 const stack = document.getElementById('canvasStack');
                 const cursorLayer = document.getElementById('ocCursorLayer');
                 if (cursorLayer) stack.insertBefore(previewCanvas, cursorLayer);
@@ -2163,6 +2182,9 @@
     // swatch harness can render from identical code. Only the TOOL_META
     // registration stays here, since TOOL_META is app state.
     const FAMILY_ICONS = {
+        // Reusing the old quill glyph for the nib until a chisel icon exists —
+        // it at least reads as "pen". Worth redrawing.
+        Ink: '/graphics/Exquisite-corpse-tool-icons-10-QUILL.svg',
         Watercolor: '/graphics/Exquisite-corpse-tool-icons-11-WATERCOLOR.svg',
         Charcoal: '/graphics/Exquisite-corpse-tool-icons-12-CHARCOAL.svg',
         Pastel: '/graphics/Exquisite-corpse-tool-icons-13-PASTEL.svg',
@@ -2178,7 +2200,7 @@
     // inline template). Families render as non-clickable section headers;
     // headers are omitted entirely when only one family is visible (free and
     // anonymous users just see the flat Basics list they always had).
-    const TOOL_FAMILY_ORDER = ['Basics', 'Ink', 'Watercolor', 'Charcoal', 'Pastel'];
+    const TOOL_FAMILY_ORDER = ['Basics', 'Ink', 'Watercolor', 'Charcoal', 'Pastel', 'Effects'];
     // Rebuilds the on-screen tool menu (if any) after auth state changes —
     // the draw screens can render before the async /account/me fetch lands,
     // and the subscriber families need to appear once it does. Click handling
@@ -2660,8 +2682,7 @@
                 <div class="h-6 border-l border-gray-300"></div>
                 <div class="flex items-center gap-1.5">
                     <span class="text-xs text-gray-500 mr-0.5">Layer</span>
-                    <button id="layerBtn1" data-layer="1" class="layerBtn active px-2.5 py-1.5 rounded-lg border border-gray-300 text-sm font-semibold" title="Line art layer (top)">1</button>
-                    <button id="layerBtn0" data-layer="0" class="layerBtn px-2.5 py-1.5 rounded-lg border border-gray-300 text-sm font-semibold" title="Background layer (bottom)">2</button>
+                    ${layerButtonsHtml()}
                 </div>
                 <div class="h-6 border-l border-gray-300"></div>
                 <div class="flex items-center gap-1.5" id="colorRow">
@@ -2685,8 +2706,7 @@
             <div class="flex-1 flex items-center justify-center overflow-hidden p-2" id="paperArea">
                 <div id="paperWrap" class="shadow-xl" style="width:fit-content">
                     <div id="canvasStack" class="relative bg-white border-2 border-gray-300">
-                        <canvas id="layerCanvas0" width="${CANVAS_W}" height="${CANVAS_H}" class="layerCanvas block" style="z-index:1"></canvas>
-                        <canvas id="layerCanvas1" width="${CANVAS_W}" height="${CANVAS_H}" class="layerCanvas block" style="z-index:2; cursor:crosshair"></canvas>
+                        ${layerCanvasHtml()}
                         <div id="ocCursorLayer" class="absolute inset-0" style="z-index:3; pointer-events:none"></div>
                     </div>
                 </div>
@@ -2753,12 +2773,12 @@
     // setupCanvas() above, but every draw call also gets broadcast (and
     // remote players' draw calls get applied here too, via applyRemoteDrawOp).
     function setupOpenCanvasDrawing() {
-        const canvases = [document.getElementById('layerCanvas0'), document.getElementById('layerCanvas1')];
+        const canvases = layerCanvases();
         const ctxs = canvases.map(c => c.getContext('2d', { willReadFrequently: true }));
         ctxs.forEach(ctx => { ctx.lineCap = 'round'; ctx.lineJoin = 'round'; });
         ocCtxs = ctxs;
 
-        const topCanvas = canvases[1];
+        const topCanvas = canvases[TOP_LAYER];
 
         fitPaper();
         requestAnimationFrame(fitPaper);
@@ -2930,7 +2950,7 @@
                 previewCanvas = document.createElement('canvas');
                 previewCanvas.width = CANVAS_W; previewCanvas.height = CANVAS_H;
                 previewCanvas.className = 'layerCanvas block';
-                previewCanvas.style.cssText = 'z-index:3; pointer-events:none';
+                previewCanvas.style.cssText = `z-index:${LAYER_COUNT + 1}; pointer-events:none`;
                 const stack = document.getElementById('canvasStack');
                 const cursorLayer = document.getElementById('ocCursorLayer');
                 if (cursorLayer) stack.insertBefore(previewCanvas, cursorLayer);
@@ -3231,8 +3251,7 @@
         const ctx = flat.getContext('2d');
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-        ctx.drawImage(document.getElementById('layerCanvas0'), 0, 0);
-        ctx.drawImage(document.getElementById('layerCanvas1'), 0, 0);
+        for (const c of layerCanvases()) ctx.drawImage(c, 0, 0);
         return flat;
     }
 
@@ -3249,7 +3268,7 @@
     }
 
     async function submitDrawing() {
-        const canvas = document.getElementById('layerCanvas1');
+        const canvas = document.getElementById('layerCanvas0');
         if (!canvas || S.submittedThisRound) return;
         S.submittedThisRound = true;
         const roundBeingSubmitted = S.game.round;
