@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Brush swatch sheets</title>
+<style>
+  body { font: 14px system-ui, sans-serif; background: #22222a; color: #ddd; margin: 0; padding: 24px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p.note { color: #999; max-width: 70ch; line-height: 1.5; }
+  .sheet { margin: 28px 0; }
+  .sheet h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .08em; color: #ffec06; }
+  canvas { background: #fff; max-width: 100%; box-shadow: 0 2px 18px #0008; }
+  #status { color: #8f8; font-family: monospace; }
+</style>
+</head>
+<body>
+<h1>Brush swatch sheets</h1>
+<p class="note">
+  Every brush rendered through an identical battery of test strokes, straight
+  from <code>/brush-engine.js</code> — the same code the app paints with.
+  Sheets are POSTed to <code>dev/out/</code> as PNGs on load.
+  Serve via <code>node dev/swatch-server.js</code>.
+</p>
+<div id="status">rendering…</div>
+<div id="sheets"></div>
+
+<!-- The real engine. No mocks: if a swatch looks wrong, the brush is wrong. -->
+<script src="/brush-engine.js"></script>
+<script>
+// ============================================================================
+// Swatch harness
+// ============================================================================
+// The app drives brushes from live pointer events. Here we synthesise those
+// inputs — a path plus a pressure profile per test — and push them through the
+// unmodified engine primitives. That's the only simulated part; every mark on
+// these sheets is made by production stamping code.
+
+// ---- Sheet geometry ----
+const LABEL_W = 190;   // left gutter holding the brush name
+const CELL_W  = 250;
+const CELL_H  = 165;
+const PAD     = 14;
+const HEAD_H  = 34;    // column-header strip
+
+// ---- Test battery ----
+// Chosen to isolate the things that actually decide whether a brush reads as
+// its real-world medium: how it starts and ends, how a filled area looks, what
+// happens where two strokes cross, and what the stroke EDGE does.
+const TESTS = [
+  { id: 'taper',   label: 'pressure taper' },
+  { id: 'wash',    label: 'filled area' },
+  { id: 'overlap', label: 'two strokes crossing' },
+  { id: 'flick',   label: 'fast light flick' },
+  { id: 'dab',     label: 'single dab' },
+  { id: 'edge',    label: 'full-pressure edge' },
+];
+
+// Per-family pigment colours, picked to match what a reference scan of the
+// real medium would most likely be made with.
+const FAMILY_COLOR = {
+  Ink:        '#141414',
+  Watercolor: '#2f5d99',
+  Charcoal:   '#1c1c1c',
+  Pastel:     '#b4472e',
+};
+
+// ---------------------------------------------------------------------------
+// Path generators — each returns { pts, pressures } in cell-local coordinates
+// ---------------------------------------------------------------------------
+// Points are sampled ~2.5px apart, roughly the spacing a real pointermove
+// stream delivers, so stampAlongSegment's residual-carry cadence behaves the
+// way it does in the app rather than being fed one giant segment.
+const SAMPLE = 2.5;
+
+function samplePath(fn, len, pressureFn) {
+  const pts = [], pressures = [];
+  const steps = Math.max(2, Math.round(len / SAMPLE));
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    pts.push(fn(t));
+    pressures.push(pressureFn(t));
+  }
+  return { pts, pressures };
+}
+
+// A serpentine that fills a box — the "lay in a flat wash" case.
+function serpentine(x, y, w, h, passes) {
+  return t => {
+    const total = t * passes;
+    const row = Math.floor(total);
+    const frac = total - row;
+    const dir = row % 2 === 0 ? frac : 1 - frac;
+    return { x: x + dir * w, y: y + (row + frac * 0) * (h / passes) + (h / passes) * frac };
+  };
+}
+
+function strokesFor(test) {
+  const cx = CELL_W / 2, cy = CELL_H / 2;
+  switch (test) {
+    case 'taper':
+      // Rises to full pressure mid-stroke and falls away — exposes how the
+      // brush enters and leaves the paper.
+      return [samplePath(t => ({ x: 20 + t * (CELL_W - 40), y: cy }), CELL_W - 40,
+        t => 0.05 + Math.sin(t * Math.PI) * 0.95)];
+    case 'wash':
+      return [samplePath(serpentine(24, 30, CELL_W - 48, CELL_H - 60, 5), (CELL_W - 48) * 5,
+        () => 0.7)];
+    case 'overlap':
+      // TWO separate strokes, rendered as two separate lifts — which for wet
+      // presets means two independent multiply composites. This is the test
+      // that proves layering darkens.
+      return [
+        samplePath(t => ({ x: 30 + t * (CELL_W - 60), y: 34 + t * (CELL_H - 68) }), CELL_W, () => 0.7),
+        samplePath(t => ({ x: 30 + t * (CELL_W - 60), y: CELL_H - 34 - t * (CELL_H - 68) }), CELL_W, () => 0.7),
+      ];
+    case 'flick':
+      return [samplePath(t => ({ x: 40 + t * (CELL_W - 80), y: cy + 18 - t * 36 }), CELL_W - 80,
+        () => 0.22)];
+    case 'dab':
+      // Single point: hits stampAlongSegment's dist<0.02 "dot on tap" branch.
+      return [{ pts: [{ x: cx, y: cy }], pressures: [0.8] }];
+    case 'edge':
+      return [samplePath(t => ({ x: 20 + t * (CELL_W - 40), y: cy }), CELL_W - 40, () => 1.0)];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Preset (Watercolor / Charcoal / Pastel) rendering
+// ---------------------------------------------------------------------------
+// Mirrors the app exactly: dry presets stamp onto the target; wet presets
+// accumulate in an offscreen buffer at full strength and composite ONCE per
+// stroke with multiply at preset.opacity (see finishWetStroke in index.html).
+function renderPresetCell(ctx, presetId, test, ox, oy, color) {
+  const preset = BRUSH_PRESETS[presetId];
+  const base = preset.size;
+
+  for (const stroke of strokesFor(test)) {
+    let target = ctx, buf = null;
+    if (preset.wet) {
+      buf = document.createElement('canvas');
+      buf.width = CELL_W; buf.height = CELL_H;
+      target = buf.getContext('2d');
+    }
+
+    const state = { residual: 0 };
+    const widthAt = i => presetWidthFor(preset, base, { pointerType: 'pen', pressure: stroke.pressures[i] });
+    const local = p => preset.wet ? p : { x: p.x + ox, y: p.y + oy };
+
+    if (stroke.pts.length === 1) {
+      const p = local(stroke.pts[0]);
+      stampAlongSegment(target, presetId, color, p, p, widthAt(0), widthAt(0), state);
+    } else {
+      for (let i = 1; i < stroke.pts.length; i++) {
+        stampAlongSegment(target, presetId, color,
+          local(stroke.pts[i - 1]), local(stroke.pts[i]), widthAt(i - 1), widthAt(i), state);
+      }
+    }
+
+    if (preset.wet) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'multiply';
+      ctx.globalAlpha = preset.opacity;
+      ctx.drawImage(buf, ox, oy);
+      ctx.restore();
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Ink rendering
+// ---------------------------------------------------------------------------
+// The three ink tools are hand-coded rather than preset rows, so their input
+// drivers are reconstructed here from the app's handlers (splat repeats a blot
+// once the pointer has travelled far enough; splatter emits frames on a rAF
+// loop; the quill's width tracks stroke SPEED, pooling blobs where it lingers).
+// The stamps themselves are the production functions.
+const INK_SIZE = { splat: 26, splatter: 40, quill: 7 };
+
+function renderInkCell(ctx, tool, test, ox, oy, color) {
+  const size = INK_SIZE[tool];
+  const cx = ox + CELL_W / 2, cy = oy + CELL_H / 2;
+
+  if (tool === 'splatter') {
+    // Splatter has no stroke shape — it's a spray whose only real variables
+    // are dwell time and pressure, so the battery maps onto those.
+    const framesFor = { taper: 14, wash: 60, overlap: 30, flick: 6, dab: 3, edge: 40 };
+    const pressFor  = { taper: 0.5, wash: 0.8, overlap: 0.6, flick: 0.25, dab: 0.8, edge: 1.0 };
+    const spread    = test === 'wash' ? CELL_W * 0.32 : size;
+    for (let f = 0; f < framesFor[test]; f++) {
+      inkStampSplatterFrame(ctx, color, spread, { x: cx, y: cy }, pressFor[test]);
+    }
+    return;
+  }
+
+  for (const stroke of strokesFor(test)) {
+    if (tool === 'splat') {
+      // Blot every ~2.2 tip widths of travel, matching the app's
+      // distance-gated repeat stamp.
+      let last = null;
+      for (let i = 0; i < stroke.pts.length; i++) {
+        const p = { x: stroke.pts[i].x + ox, y: stroke.pts[i].y + oy };
+        const sz = size * (0.6 + stroke.pressures[i] * 0.8) * (0.8 + Math.random() * 0.4);
+        if (!last || Math.hypot(p.x - last.x, p.y - last.y) > sz * 2.2) {
+          inkStampSplat(ctx, color, sz, p.x, p.y);
+          last = p;
+        }
+      }
+    } else { // quill
+      // Speed drives width: fast = thin and dry, slow = fat and wet. The
+      // synthetic "speed" here is the pressure profile inverted, so the taper
+      // cell reads as a stroke that slows in the middle.
+      ctx.strokeStyle = color;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.globalCompositeOperation = 'source-over';
+      const wAt = i => Math.max(0.5, size * (0.35 + 1.3 * stroke.pressures[i]));
+
+      if (stroke.pts.length === 1) {
+        inkStampQuillBlob(ctx, color, wAt(0), stroke.pts[0].x + ox, stroke.pts[0].y + oy);
+        continue;
+      }
+      inkStampQuillBlob(ctx, color, wAt(0) * 1.2, stroke.pts[0].x + ox, stroke.pts[0].y + oy);
+      for (let i = 1; i < stroke.pts.length; i++) {
+        const a = { x: stroke.pts[i - 1].x + ox, y: stroke.pts[i - 1].y + oy };
+        const b = { x: stroke.pts[i].x + ox, y: stroke.pts[i].y + oy };
+        taperedSegment(ctx, a, b, wAt(i - 1), wAt(i));
+        // Pooling where the nib lingers (i.e. where it's running slow/fat).
+        if (stroke.pressures[i] > 0.75 && Math.random() < 0.05) {
+          inkStampQuillBlob(ctx, color, wAt(i) * (1.2 + Math.random() * 0.9), b.x, b.y);
+        }
+        if (Math.random() < 0.015) {
+          const ang = Math.random() * Math.PI * 2, d = wAt(i) * (2 + Math.random() * 5);
+          inkStampQuillBlob(ctx, color, Math.max(0.6, wAt(i) * 0.2),
+            b.x + Math.cos(ang) * d, b.y + Math.sin(ang) * d);
+        }
+      }
+    }
+  }
+}
+
+// Copy of the app's strokeTaperedSegment (it lives inside setupCanvas closures
+// in index.html and is duplicated there already; not worth a third extraction
+// just for the harness).
+function taperedSegment(ctx, from, to, fromWidth, toWidth) {
+  const dx = to.x - from.x, dy = to.y - from.y;
+  const dist = Math.hypot(dx, dy);
+  const steps = Math.max(1, Math.ceil(dist / Math.max(1, Math.max(fromWidth, toWidth, 1) * 0.5)));
+  let px = from.x, py = from.y;
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    const x = from.x + dx * t, y = from.y + dy * t;
+    ctx.lineWidth = fromWidth + (toWidth - fromWidth) * t;
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    px = x; py = y;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sheet assembly
+// ---------------------------------------------------------------------------
+function brushesByFamily() {
+  const fams = { Ink: ['splat', 'splatter', 'quill'] };
+  for (const [id, p] of Object.entries(BRUSH_PRESETS)) {
+    (fams[p.family] = fams[p.family] || []).push(id);
+  }
+  return fams;
+}
+
+const INK_LABEL = { splat: 'Ink Splat', splatter: 'Ink Splatter', quill: 'Wet Quill' };
+
+function renderSheet(family, brushes) {
+  const canvas = document.createElement('canvas');
+  canvas.width = LABEL_W + TESTS.length * CELL_W + PAD * 2;
+  canvas.height = HEAD_H + brushes.length * CELL_H + PAD * 2;
+  const ctx = canvas.getContext('2d');
+  const color = FAMILY_COLOR[family];
+
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Column headers
+  ctx.fillStyle = '#999';
+  ctx.font = '12px system-ui, sans-serif';
+  TESTS.forEach((t, i) => {
+    ctx.fillText(t.label, PAD + LABEL_W + i * CELL_W + 8, PAD + 20);
+  });
+
+  brushes.forEach((id, r) => {
+    const oy = PAD + HEAD_H + r * CELL_H;
+
+    // Hairline separators — they make it possible to tell which mark belongs
+    // to which test when comparing against a reference scan.
+    ctx.strokeStyle = '#e6e6e6';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(PAD, oy + 0.5);
+    ctx.lineTo(canvas.width - PAD, oy + 0.5);
+    ctx.stroke();
+
+    ctx.fillStyle = '#333';
+    ctx.font = '600 13px system-ui, sans-serif';
+    ctx.fillText(BRUSH_PRESETS[id] ? BRUSH_PRESETS[id].label : INK_LABEL[id], PAD + 6, oy + 26);
+    ctx.fillStyle = '#aaa';
+    ctx.font = '11px monospace';
+    ctx.fillText(id, PAD + 6, oy + 44);
+    if (BRUSH_PRESETS[id]) {
+      const p = BRUSH_PRESETS[id];
+      ctx.fillText(`tip ${p.tip}`, PAD + 6, oy + 62);
+      ctx.fillText(`sp ${p.spacing}  op ${p.opacity}`, PAD + 6, oy + 78);
+      ctx.fillText(`sc ${p.scatter}  ${p.wet ? 'wet' : 'dry'}`, PAD + 6, oy + 94);
+    }
+
+    TESTS.forEach((t, i) => {
+      const ox = PAD + LABEL_W + i * CELL_W;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(ox, oy, CELL_W, CELL_H);
+      ctx.clip();
+      if (BRUSH_PRESETS[id]) renderPresetCell(ctx, id, t.id, ox, oy, color);
+      else renderInkCell(ctx, id, t.id, ox, oy, color);
+      ctx.restore();
+    });
+  });
+
+  return canvas;
+}
+
+// ---- Run ----
+(async function () {
+  const fams = brushesByFamily();
+  const order = ['Ink', 'Watercolor', 'Charcoal', 'Pastel'].filter(f => fams[f]);
+  const host = document.getElementById('sheets');
+  const status = document.getElementById('status');
+  const saved = [];
+
+  for (const family of order) {
+    const canvas = renderSheet(family, fams[family]);
+    const wrap = document.createElement('div');
+    wrap.className = 'sheet';
+    wrap.innerHTML = `<h2>${family}</h2>`;
+    wrap.appendChild(canvas);
+    host.appendChild(wrap);
+
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+    const name = `swatches-${family.toLowerCase()}.png`;
+    try {
+      await fetch(`/__save?name=${encodeURIComponent(name)}`, { method: 'POST', body: blob });
+      saved.push(name);
+    } catch (e) {
+      status.textContent = 'render ok, save failed (not served by swatch-server.js?): ' + e;
+      return;
+    }
+  }
+  status.textContent = `saved to dev/out/: ${saved.join(', ')}`;
+})();
+</script>
+</body>
+</html>

@@ -6,3 +6,6 @@ data/
 *.swp
 *.swo
 *~
+
+# Generated swatch sheets from the brush harness (dev/swatch-server.js)
+dev/out/

@@ -6,6 +6,12 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["server.js"],
       "port": 3000
+    },
+    {
+      "name": "swatches",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["dev/swatch-server.js"],
+      "port": 4600
     }
   ]
 }

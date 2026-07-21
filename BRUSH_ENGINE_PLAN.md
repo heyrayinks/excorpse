@@ -6,7 +6,35 @@ Pastel 4) are live. This doc is the map for adding more brushes (the whole
 point of the $2.99/mo subscription: new brushes as they release) and for the
 bigger lifts that were deliberately deferred.
 
-## Where everything lives (all in `index.html` unless noted)
+## Swatch harness (added 2026-07-21) — look before you tune
+
+    node dev/swatch-server.js
+    -> http://localhost:4600/dev/brush-swatches.html
+
+Renders every brush through an identical battery of six test strokes
+(pressure taper / filled area / two strokes crossing / fast light flick /
+single dab / full-pressure edge) and writes one PNG per family to
+`dev/out/`. Parameter tuning was previously done blind — screenshots are
+unreliable in the automated browser pane, so brushes were verified by
+counting pixel alpha, which proves paint landed but says nothing about
+whether it looks like the medium. Open the sheets side by side with a
+reference scan instead.
+
+The harness renders from `/brush-engine.js`, the SAME file the app loads —
+a swatch sheet that could drift from what players get would be worse than
+none. Only the input is synthesised (a path plus a pressure profile per
+test); every mark is made by production stamping code. The ink tools'
+drivers are reconstructed in the harness since their handlers live inside
+`setupCanvas` closures, but they call the real `inkStamp*` functions.
+
+## Where everything lives
+
+**`brush-engine.js`** (extracted from `index.html` 2026-07-21, loaded as a
+classic `<script src>` before the main one so its top-level consts stay
+visible exactly as when inline) holds the ink stamps and the whole
+parametric engine. `FAMILY_ICONS` and the `TOOL_META` registration loop
+stayed in `index.html` — they depend on app state, not engine state.
+Everything else below is still in `index.html`.
 
 - **`BRUSH_PRESETS`** — the data table. One row per brush: `family`, `label`,
   `tip`, `spacing` (fraction of width between stamps), `opacity` (wet
