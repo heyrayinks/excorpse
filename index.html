@@ -3627,8 +3627,8 @@
     const savedOcFavoriteKeys = new Set();
 
     // ---------- OPEN CANVAS TIMELAPSE REPLAY ----------
-    // Plays the game's persisted draw-op log back onto an offscreen pair of
-    // layer canvases, compressed into a short timelapse, on the results
+    // Plays the game's persisted draw-op log back onto an offscreen copy of
+    // the layer stack, compressed into a short timelapse, on the results
     // screen. Reuses applyRemoteDrawOp() wholesale — the exact same renderer
     // that paints remote players' live strokes and a late-joiner's history —
     // by pointing ocCtxs at the replay canvases and feeding it ops paced over
