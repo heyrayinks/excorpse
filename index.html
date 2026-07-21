@@ -480,6 +480,9 @@
         CANVAS_W = BASE_CANVAS_W * RENDER_SCALE;
         CANVAS_H = BASE_CANVAS_H * RENDER_SCALE;
         EDGE_H = BASE_EDGE_H * RENDER_SCALE;
+        // Keep the dry brushes' paper tooth a fixed physical size — without
+        // this it turns to fine sand on the 300 DPI canvas.
+        setPaperScale(RENDER_SCALE);
         return RENDER_SCALE;
     }
 
@@ -2639,7 +2642,7 @@
         // every player, paid or not — it's one shared surface, so there's no
         // meaningful per-player "print quality" the way there is for a
         // personal sheet in the round-based modes.
-        CANVAS_W = BASE_CANVAS_W; CANVAS_H = BASE_CANVAS_H; EDGE_H = BASE_EDGE_H; RENDER_SCALE = 1;
+        CANVAS_W = BASE_CANVAS_W; CANVAS_H = BASE_CANVAS_H; EDGE_H = BASE_EDGE_H; RENDER_SCALE = 1; setPaperScale(1);
         const sizeCfg = sizeConfigFor(S.tool);
 
         app.innerHTML = `

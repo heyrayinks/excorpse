@@ -157,23 +157,23 @@ const BRUSH_PRESETS = {
     ink_nib:      { family: 'Ink', label: 'Chisel Nib', nib: true, nibAngle: -0.7, wet: false, sizeRange: [3, 34], size: 11, pressureSize: 0.35 },
     wc_wash:      { family: 'Watercolor', label: 'Wet Wash',     tip: 'wetDisc',     spacing: 0.18, opacity: 0.38, wet: true,  rim: 2.2, rimWidth: 4,  sizeRange: [8, 80],  size: 30, pressureSize: 0.5, scatter: 0.05, angle: 'none' },
     wc_bleed:     { family: 'Watercolor', label: 'Soft Bleed',   tip: 'softDisc',    spacing: 0.16, opacity: 0.30, wet: true,  rim: 0.8, rimWidth: 10, sizeRange: [10, 90], size: 42, pressureSize: 0.5, scatter: 0.08, angle: 'none' },
-    wc_dry:       { family: 'Watercolor', label: 'Dry Brush',    rake: true, grains: 46, grit: 0.42, gritScale: 0.13, stampAlpha: 0.62, wet: false, sizeRange: [6, 60],  size: 22, pressureSize: 0.6 },
+    wc_dry:       { family: 'Watercolor', label: 'Dry Brush',    rake: true, grains: 46, tooth: 0.75, grit: 0.42, gritScale: 0.13, stampAlpha: 0.62, wet: false, sizeRange: [6, 60],  size: 22, pressureSize: 0.6 },
     wc_granulate: { family: 'Watercolor', label: 'Granulating',  tip: 'granDisc',    spacing: 0.18, opacity: 0.42, wet: true,  rim: 1.8, rimWidth: 4, granulate: 0.85, sizeRange: [8, 80],  size: 32, pressureSize: 0.5, scatter: 0.06, angle: 'none' },
     // Charcoal and Pastel are all dragged tips (rake: true) — see
     // rakeAlongSegment. `grains` is roughly how many ridges touch the paper,
     // `grit`/`gritScale` how readily they lift and how fine the resulting
     // break-up is. A high grit with few grains is a bald, scratchy stick; a low
     // grit with many is a dense soft one.
-    ch_willow:     { family: 'Charcoal', label: 'Willow',          rake: true, grains: 44, grit: 0.34, gritScale: 0.10, stampAlpha: 0.34, wet: false, sizeRange: [6, 70],  size: 26, pressureSize: 0.45 },
-    ch_compressed: { family: 'Charcoal', label: 'Compressed',      rake: true, grains: 60, grit: 0.16, gritScale: 0.07, stampAlpha: 0.72, wet: false, sizeRange: [4, 60],  size: 18, pressureSize: 0.5 },
-    ch_pencil:     { family: 'Charcoal', label: 'Charcoal Pencil', rake: true, grains: 22, grit: 0.22, gritScale: 0.16, stampAlpha: 0.6,  wet: false, sizeRange: [2, 24],  size: 8,  pressureSize: 0.6 },
-    ch_stick:      { family: 'Charcoal', label: 'Side Stick',      rake: true, grains: 72, grit: 0.40, gritScale: 0.06, stampAlpha: 0.52, wet: false, sizeRange: [12, 90], size: 40, pressureSize: 0.4 },
+    ch_willow:     { family: 'Charcoal', label: 'Willow',          rake: true, grains: 44, tooth: 0.8, grit: 0.34, gritScale: 0.10, stampAlpha: 0.34, wet: false, sizeRange: [6, 70],  size: 26, pressureSize: 0.45 },
+    ch_compressed: { family: 'Charcoal', label: 'Compressed',      rake: true, grains: 60, tooth: 0.55, grit: 0.16, gritScale: 0.07, stampAlpha: 0.72, wet: false, sizeRange: [4, 60],  size: 18, pressureSize: 0.5 },
+    ch_pencil:     { family: 'Charcoal', label: 'Charcoal Pencil', rake: true, grains: 22, tooth: 0.35, grit: 0.22, gritScale: 0.16, stampAlpha: 0.6,  wet: false, sizeRange: [2, 24],  size: 8,  pressureSize: 0.6 },
+    ch_stick:      { family: 'Charcoal', label: 'Side Stick',      rake: true, grains: 72, tooth: 0.85, grit: 0.40, gritScale: 0.06, stampAlpha: 0.52, wet: false, sizeRange: [12, 90], size: 40, pressureSize: 0.4 },
     // Pastel: waxy/chalky, with the colour wobble now carried per contact
     // ridge rather than per stamp.
-    op_soft:    { family: 'Pastel', label: 'Soft Pastel', rake: true, grains: 50, grit: 0.30, gritScale: 0.09, stampAlpha: 0.72, colorJitter: 0.05, wet: false, sizeRange: [6, 70],  size: 24, pressureSize: 0.5 },
-    op_heavy:   { family: 'Pastel', label: 'Oil Pastel',  rake: true, grains: 66, grit: 0.12, gritScale: 0.05, stampAlpha: 0.92, colorJitter: 0.07, wet: false, sizeRange: [6, 70],  size: 26, pressureSize: 0.5 },
-    op_scumble: { family: 'Pastel', label: 'Scumble',     rake: true, grains: 32, grit: 0.55, gritScale: 0.15, stampAlpha: 0.6,  colorJitter: 0.06, wet: false, sizeRange: [10, 90], size: 40, pressureSize: 0.4 },
-    op_chalk:   { family: 'Pastel', label: 'Chalk',       rake: true, grains: 46, grit: 0.38, gritScale: 0.11, stampAlpha: 0.44, colorJitter: 0.08, wet: false, sizeRange: [6, 70],  size: 26, pressureSize: 0.5 },
+    op_soft:    { family: 'Pastel', label: 'Soft Pastel', rake: true, grains: 50, tooth: 0.7, grit: 0.30, gritScale: 0.09, stampAlpha: 0.72, colorJitter: 0.05, wet: false, sizeRange: [6, 70],  size: 24, pressureSize: 0.5 },
+    op_heavy:   { family: 'Pastel', label: 'Oil Pastel',  rake: true, grains: 66, tooth: 0.4, grit: 0.12, gritScale: 0.05, stampAlpha: 0.92, colorJitter: 0.07, wet: false, sizeRange: [6, 70],  size: 26, pressureSize: 0.5 },
+    op_scumble: { family: 'Pastel', label: 'Scumble',     rake: true, grains: 32, tooth: 0.85, grit: 0.55, gritScale: 0.15, stampAlpha: 0.6,  colorJitter: 0.06, wet: false, sizeRange: [10, 90], size: 40, pressureSize: 0.4 },
+    op_chalk:   { family: 'Pastel', label: 'Chalk',       rake: true, grains: 46, tooth: 0.8, grit: 0.38, gritScale: 0.11, stampAlpha: 0.44, colorJitter: 0.08, wet: false, sizeRange: [6, 70],  size: 26, pressureSize: 0.5 },
 };
 
 
@@ -402,6 +402,50 @@ function tipSprite(tip, color, w, colorJitter) {
 // along distance travelled, so points drop in and out against the tooth of the
 // paper instead of drawing unbroken comb lines.
 
+// ---- Paper tooth ----
+//
+// The rake gives direction and drag, but on its own it has no notion of the
+// PAPER: strokes come out fibrous, long parallel filaments rather than tone
+// sitting in a textured surface. Real dry media only touches the high points
+// of the sheet, so pigment density is a property of where you are on the page,
+// not of the stroke.
+//
+// This is sampled per contact point per segment, in canvas coordinates, so
+// overlapping hatch passes catch the SAME tooth and build up the way charcoal
+// actually does. It's procedural rather than the cached noise canvas the wet
+// brushes granulate through (paperGrainField) because dry media paints
+// straight to the layer for instant feedback — there's no lift-composite to
+// mask through, and a per-point function needs no readback.
+//
+// Sampling per point also happens to decorrelate by construction: the value
+// depends on position, and every grain is at a different position, so nothing
+// lines up on segment boundaries.
+let PAPER_SCALE = 1;   // tracks RENDER_SCALE so tooth is a fixed physical size
+function setPaperScale(s) { PAPER_SCALE = s || 1; }
+
+function paperHash2(x, y) {
+    const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+    return s - Math.floor(s);
+}
+function paperValueNoise(x, y) {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const xf = x - xi, yf = y - yi;
+    const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+    const a = paperHash2(xi, yi), b = paperHash2(xi + 1, yi);
+    const c = paperHash2(xi, yi + 1), d = paperHash2(xi + 1, yi + 1);
+    const top = a + (b - a) * u, bot = c + (d - c) * u;
+    return top + (bot - top) * v;
+}
+// Two octaves: a coarse one for the tooth itself, a finer one for the speckle
+// that sits inside it. ~4px features at 1x, scaled up at 300 DPI so the paper
+// doesn't turn into fine sand when the canvas gets bigger.
+function paperTooth(x, y) {
+    const s = 4 * PAPER_SCALE;
+    const n1 = paperValueNoise(x / s, y / s);
+    const n2 = paperValueNoise(x / (s * 0.42) + 31.4, y / (s * 0.42) + 17.2);
+    return n1 * 0.68 + n2 * 0.32;
+}
+
 function rakeHash(x) {
     const s = Math.sin(x) * 43758.5453;
     return s - Math.floor(s);
@@ -511,6 +555,7 @@ function rakeAlongSegment(ctx, presetId, color, from, to, fromW, toW, state) {
     // like. Round caps also soften where a ridge drops out.
     ctx.lineCap = 'round';
     const baseAlpha = preset.stampAlpha ?? 1;
+    const tooth = preset.tooth || 0;
 
     // A tap still has to leave a mark: give a zero-length segment a short
     // smear along the tip so it reads as the stick being set down, not a dot.
@@ -518,37 +563,56 @@ function rakeAlongSegment(ctx, presetId, color, from, to, fromW, toW, state) {
     const ext = tap ? Math.max(1, (fromW + toW) / 14) : 0;
     const ex = Math.cos(state.dir) * ext, ey = Math.sin(state.dir) * ext;
 
-    for (const g of state.grains) {
-        const n = rakeNoise(g.seed, d1 * g.freq);
-        if (n < g.thresh) continue;               // this ridge is off the paper here
-        // Fade in near the threshold so grains dissolve rather than blink.
-        const contact = Math.min(1, (n - g.thresh) / 0.25);
-        // A second, finer octave modulates darkness AND width continuously
-        // along the streak. Without it every contact point draws a uniform
-        // line and the stroke reads as a comb: it's this that turns ruled
-        // lines back into grain.
-        const wob0 = Math.sin(d0 * g.wander + g.seed) * 0.04;
-        const wob1 = Math.sin(d1 * g.wander + g.seed) * 0.04;
-        const o0 = (g.off + wob0) * fromW, o1 = (g.off + wob1) * toW;
+    // Walk the segment in sub-steps of a fixed PHYSICAL length rather than
+    // drawing it in one go. A pointer move is ~3px on the free canvas but ~9px
+    // at 300 DPI, so gating grit once per segment produced dashes three times
+    // longer there — hard-edged tiles, blocky exactly where paying subscribers
+    // draw. Stepping at 2px * scale keeps grit the same size on the page at
+    // any resolution, and costs draw calls only in proportion to the canvas.
+    const step = 2 * PAPER_SCALE;
+    const subs = tap ? 1 : Math.max(1, Math.ceil(dist / step));
 
+    for (const g of state.grains) {
+        // Width is per GRAIN, not per sub-step. Any attribute constant across a
+        // drawn piece steps at its boundary, and every grain shares those
+        // boundaries, so the steps line up into hard vertical edges across the
+        // stroke — that was the corduroy. Same reason alpha carries no
+        // per-piece modulation: tonal variety comes from grains differing and
+        // from the paper, both decorrelated, neither periodic.
         ctx.strokeStyle = g.color;
-        // Alpha is per GRAIN, modulated only by the contact ramp. Any
-        // per-segment modulation steps at segment boundaries, and every grain
-        // shares those boundaries, so the steps align into regular vertical
-        // striping down the stroke. Tonal variety comes from the grains
-        // themselves differing, and break-up from them dropping out at their
-        // own distances — both decorrelated, neither periodic.
-        ctx.globalAlpha = Math.min(1, g.a * baseAlpha * contact);
-        // Width is per GRAIN, not per segment. Any attribute that's constant
-        // across a segment steps at the segment boundary, and since every grain
-        // shares those boundaries the steps line up into hard vertical edges
-        // across the whole stroke — that was the corduroy. Alpha steps at the
-        // same places but is far lower contrast, so only width had to go.
         ctx.lineWidth = Math.max(0.35, g.w * (fromW + toW) / 2);
-        ctx.beginPath();
-        ctx.moveTo(from.x + px * o0 - ex, from.y + py * o0 - ey);
-        ctx.lineTo(to.x + px * o1 + ex, to.y + py * o1 + ey);
-        ctx.stroke();
+
+        for (let s = 0; s < subs; s++) {
+            const ta = s / subs, tb = (s + 1) / subs;
+            const da = d0 + (d1 - d0) * ta, db = d0 + (d1 - d0) * tb;
+
+            const n = rakeNoise(g.seed, db * g.freq);
+            if (n < g.thresh) continue;           // this ridge is off the paper here
+            // Fade in near the threshold so grains dissolve rather than blink.
+            const contact = Math.min(1, (n - g.thresh) / 0.25);
+
+            const wa = fromW + (toW - fromW) * ta, wb = fromW + (toW - fromW) * tb;
+            const oa = (g.off + Math.sin(da * g.wander + g.seed) * 0.04) * wa;
+            const ob = (g.off + Math.sin(db * g.wander + g.seed) * 0.04) * wb;
+
+            const ax = from.x + dx * ta + px * oa, ay = from.y + dy * ta + py * oa;
+            const bx = from.x + dx * tb + px * ob, by = from.y + dy * tb + py * ob;
+
+            // Paper tooth, sampled at this ridge's actual position on the sheet
+            // — so overlapping passes catch the same tooth.
+            let tone = 1;
+            if (tooth) {
+                const t = paperTooth((ax + bx) / 2, (ay + by) / 2);
+                if (t < tooth * 0.34) continue;   // a hollow: the tip misses it
+                tone = 1 - tooth + tooth * t * 1.6;
+            }
+
+            ctx.globalAlpha = Math.min(1, g.a * baseAlpha * contact * tone);
+            ctx.beginPath();
+            ctx.moveTo(ax - ex, ay - ey);
+            ctx.lineTo(bx + ex, by + ey);
+            ctx.stroke();
+        }
     }
     ctx.restore();
     state.dist = d1;
