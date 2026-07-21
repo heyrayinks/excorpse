@@ -429,10 +429,10 @@
         if (isCreator && S.authToken && S.user) wireOpenToFriendsToggle(overlay, code, playerId);
     }
 
-    // Letter-paper proportions (8.5 x 11). Free tier DRAWS at 100 DPI (850x1100)
-    // — same live experience as always, no perf/UX change. Paid accounts draw
-    // natively at 300 DPI (2550x3300). Resolution is fixed at draw-time per
-    // player, based on whoever is holding the pen, not a post-hoc save-time boost.
+    // Letter-paper proportions (8.5 x 11). Anonymous play DRAWS at 100 DPI
+    // (850x1100); logged-in accounts draw at 200 DPI (1700x2200). Resolution is
+    // fixed at draw-time per player, based on whoever is holding the pen, not a
+    // post-hoc save-time boost — see PAID_RENDER_SCALE / OUTPUT_SCALE below.
     //
     // Every SUBMITTED section is normalized to OUTPUT_W x OUTPUT_H (the paid/300
     // DPI size) regardless of who drew it, so every sheet is uniform for
@@ -457,10 +457,29 @@
         .map(idx => `<button id="layerBtn${idx}" data-layer="${idx}" class="layerBtn ${idx === TOP_LAYER ? 'active ' : ''}px-2.5 py-1.5 rounded-lg border border-gray-300 text-sm font-semibold" title="${idx === TOP_LAYER ? 'Top layer' : idx === 0 ? 'Bottom layer' : 'Layer ' + (LAYER_COUNT - idx)}">${LAYER_COUNT - idx}</button>`)
         .join('\n                    ');
     const layerCanvases = () => Array.from({ length: LAYER_COUNT }, (_, i) => document.getElementById('layerCanvas' + i));
-    const PAID_RENDER_SCALE = 3; // 100 DPI -> 300 DPI
-    const OUTPUT_W = BASE_CANVAS_W * PAID_RENDER_SCALE;   // 2550 — universal stored/stitched size
-    const OUTPUT_H = BASE_CANVAS_H * PAID_RENDER_SCALE;   // 3300
-    const OUTPUT_EDGE_H = BASE_EDGE_H * PAID_RENDER_SCALE; // 120
+    // Two INDEPENDENT knobs. They used to be one constant, which meant the
+    // resolution people drew at and the resolution everything was stored at
+    // could never differ — so lowering the drawing cost also downgraded every
+    // stored file, and vice versa.
+    //
+    // PAID_RENDER_SCALE — what a logged-in user's live canvas is rendered at.
+    //   Anonymous play stays at 1 (100 DPI) to keep canvas-heavy work cheap for
+    //   drive-by traffic. At 2 the live canvas is 3.7M px instead of 8.4M.
+    // OUTPUT_SCALE — the single size every submission is normalized into.
+    //   It HAS to be uniform: a round-based creation stitches three sections
+    //   drawn by three different people into one image.
+    //
+    // Both sit at 2 (200 DPI) — the floor for a decent print. 300 DPI is
+    // planned as a subscriber perk generated on demand at export time rather
+    // than carried live; see "300 DPI export" in BRUSH_ENGINE_PLAN.md. Raising
+    // either number back is a one-line change; stitching scales each section
+    // into the frame explicitly, so images stored at the old 300 DPI still
+    // composite correctly alongside new ones.
+    const PAID_RENDER_SCALE = 2; // 100 DPI -> 200 DPI
+    const OUTPUT_SCALE = 2;      // stored/stitched at 200 DPI
+    const OUTPUT_W = BASE_CANVAS_W * OUTPUT_SCALE;   // 1700
+    const OUTPUT_H = BASE_CANVAS_H * OUTPUT_SCALE;   // 2200
+    const OUTPUT_EDGE_H = BASE_EDGE_H * OUTPUT_SCALE; // 80
     const MAX_FAVORITES = 15;    // must match MAX_FAVORITES in data.js
     // Kill switch for the account-page "Subscribe" button (e.g. while the
     // Stripe subscription product/webhooks aren't configured yet) — lets the
@@ -472,7 +491,7 @@
     let RENDER_SCALE = 1;
 
     function applyRenderScale() {
-        // 300 DPI is a perk of having a free account (any account, not just
+        // 200 DPI is a perk of having an account (any account, not just
         // subscribers) — anonymous play stays at 100 DPI, partly to keep
         // canvas-heavy operations (flood fill, freehand drawing) cheap for
         // drive-by traffic that hasn't bothered to sign up.
@@ -1583,8 +1602,21 @@
             const ctx = ctxs[S.activeLayer];
             ctx.globalCompositeOperation = S.tool === 'eraser' ? 'destination-out' : 'source-over';
 
+            // Pen/brush/pencil render through the shared basic-tool primitives
+            // in brush-engine.js (speed-driven width and dry-out, ink skips,
+            // paper-locked graphite). The eraser deliberately keeps the plain
+            // tapered stroke — an eraser that skipped over paper tooth would
+            // read as a bug, not as texture.
             if (S.tool === 'pencil') {
-                drawGrainySegment(ctx, from, to, (fromWidth + toWidth) / 2);
+                basicPencilSegment(ctx, S.brushColor, from, to, (fromWidth + toWidth) / 2);
+                return;
+            }
+            if (S.tool === 'brush') {
+                basicBrushSegment(ctx, S.brushColor, from, to, fromWidth, toWidth);
+                return;
+            }
+            if (S.tool === 'pen') {
+                basicPenSegment(ctx, S.brushColor, from, to, fromWidth, toWidth);
                 return;
             }
 
@@ -1829,7 +1861,7 @@
         // then composite onto the layer ONCE on lift-off (multiply at the
         // preset's opacity) — see the engine notes at BRUSH_PRESETS. Both
         // extra canvases are lazy: players who never pick a wet brush never
-        // pay their memory (full canvas size, 8.4M px at 300 DPI).
+        // pay their memory (full canvas size, 3.7M px at 200 DPI).
         let presetState = null;   // { residual, dir } for the stroke in flight
         let wetActive = false;
         let wetBufferCanvas = null, wetBufferCtx = null;
@@ -2293,8 +2325,20 @@
 
     function ocDrawSegment(ctx, tool, color, from, to, fromWidth, toWidth) {
         ctx.globalCompositeOperation = tool === 'eraser' ? 'destination-out' : 'source-over';
+        // Same shared basic-tool primitives the round engine uses. They key
+        // everything off segment length and position rather than timing, so a
+        // remote peer replaying these ops gets an identical mark with nothing
+        // extra on the wire.
         if (tool === 'pencil') {
-            ocDrawGrainySegment(ctx, color, from, to, (fromWidth + toWidth) / 2);
+            basicPencilSegment(ctx, color, from, to, (fromWidth + toWidth) / 2);
+            return;
+        }
+        if (tool === 'brush') {
+            basicBrushSegment(ctx, color, from, to, fromWidth, toWidth);
+            return;
+        }
+        if (tool === 'pen') {
+            basicPenSegment(ctx, color, from, to, fromWidth, toWidth);
             return;
         }
         ctx.strokeStyle = color;
@@ -4108,7 +4152,7 @@
     }
 
     // Shrinks the tall 3-section strip to fit within a standard 8.5x11 page
-    // (at the same 300 DPI as OUTPUT_W/H, so a single page is exactly that
+    // (at the same resolution as OUTPUT_W/H, so a single page is exactly that
     // size) and centers it, leaving white margins rather than a page-shaped
     // file with an oddly narrow, un-printable strip of content.
     function fitToLetterPage(compositeDataUrl) {
@@ -4193,8 +4237,8 @@
     // ratio, so this fits almost edge-to-edge. Shared by both the results
     // screen (sheets need stitching first) and favorites (already stitched).
     //
-    // Panel width is capped well below full OUTPUT_W (2550px) resolution —
-    // at 3 panels that would make a canvas ~75.7 million pixels, past iOS
+    // Panel width is capped well below full OUTPUT_W resolution — at 3 panels
+    // that would once have made a canvas ~75.7 million pixels, past iOS
     // Safari's canvas allocation ceiling (roughly 4096x4096 / ~16.7M px on
     // many devices), which fails silently: no error, no download, nothing.
     // Since this result always gets downscaled again by fitToLetterPage/

@@ -109,6 +109,82 @@ Everything else below is still in `index.html`.
    page. Commit per family, push (Railway auto-deploys; in-progress games
    now survive graceful deploys via the SIGTERM snapshot in `server.js`).
 
+## Planned: 300 DPI export (record → simulate → render on demand)
+
+**Status: specced, not started (2026-07-21).** Resolution currently sits at
+200 DPI for logged-in users (`PAID_RENDER_SCALE`) and 200 DPI for everything
+stored (`OUTPUT_SCALE`), which are now independent knobs. The idea here is to
+stop carrying print resolution live and instead generate it at export time,
+making 300 DPI a subscriber perk that costs nothing while drawing.
+
+### Why
+
+The live canvas pays for print resolution on every stroke, every flood fill,
+every wet buffer, on every device. Rendering on demand instead means the live
+canvas can sit at 100–200 DPI while exports go as high as we like — and brush
+quality stops being negotiated against the frame budget (the lane caps in
+`basicBrushSegment` / `basicPencilSegment` exist purely for that reason and
+would come straight back out).
+
+### The blocker that must land FIRST: determinism
+
+There are ~59 `Math.random()` calls in `brush-engine.js` and ~47 more in
+`index.html`'s drawing code. Today that's harmless — pixels are the source of
+truth. The moment an export re-renders from an op log, every one of them
+re-rolls and **the downloaded file is not the drawing the user made**:
+different grain, different splatter, different dry-brush break-up. That is
+strictly worse than a slow canvas, so it cannot ship second.
+
+Replace them with a small seeded PRNG keyed off each stroke's id (Open Canvas
+ops already carry a `sid`; see `ocSend`) plus a per-call counter. Everything
+that's already position-keyed (`paperTooth`, `paperValueNoise`, the rake's
+`rakeNoise`) is deterministic and needs no change — that's most of the texture.
+
+Bonus: this also fixes the existing accepted divergence where remote peers see
+different random details than the person drawing.
+
+### What already exists
+
+Open Canvas has ~90% of the machinery: every op is persisted to `game.strokes`
+server-side, and `applyRemoteDrawOp` already rebuilds a whole canvas from that
+log (used by late-joiner sync AND the timelapse replay, which points `ocCtxs`
+at offscreen canvases and feeds ops through the same renderer). An export is
+that same replay, run at a different scale, into a bigger buffer.
+
+**Round modes record nothing** — no op log outside the OC engine. That's the
+bulk of the remaining work.
+
+### Sequence
+
+1. **Seeded PRNG** replacing `Math.random()` in the drawing path. Verify: draw
+   a stroke, re-render the same ops, assert pixel-identical output.
+2. **Scale-parameterised replay.** `applyRemoteDrawOp` and the replay harness
+   assume base resolution (`CANVAS_W = BASE_CANVAS_W` before playback).
+   Multiply op coordinates and widths by a target scale, and call
+   `setPaperScale()` to match so paper tooth stays a fixed physical size.
+   Verify: a 1x re-render is pixel-identical to the live canvas.
+3. **300 DPI export for Open Canvas** — gate on `subscribed`, re-render the log
+   at scale 3 on download. Needs a progress state: a dense drawing at 8.4M px
+   is not an instant save. Note `fill` is pixel-based (BFS over the whole
+   canvas) and must replay in order; it's the expensive op at scale.
+4. **Op capture for round modes**, mirroring the OC op shapes, then the same
+   export path. Undo can then pop ops instead of storing PNG snapshots.
+5. **Drop the live canvas** to 100 DPI once exports are decoupled, and remove
+   the lane caps.
+
+### Watch out for
+
+- `OUTPUT_W/H` must stay a single uniform size — a round-based creation
+  stitches three sections from three different artists into one image.
+  Per-tier *stored* resolution is not possible; per-tier *export* is the whole
+  point of this design.
+- `stitchSheetDataUrl` draws each section into the frame with an explicit
+  destination size, so images stored at the old 300 DPI still composite fine
+  alongside 200 DPI ones. Don't "fix" that by assuming source dimensions.
+- iOS Safari has a canvas allocation ceiling (~16.7M px on many devices). A
+  3-panel combine at full export width already had to be capped for this
+  reason — see `combineCompositesRaw`.
+
 ## Licensing guardrails (researched 2026-07-19)
 
 - Krita's brush ENGINES are GPL C++ — never port their code into this app.

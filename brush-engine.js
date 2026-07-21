@@ -383,6 +383,193 @@ function tipSprite(tip, color, w, colorJitter) {
     return sprite;
 }
 
+// ============================================================================
+// BASIC TOOLS (Pen / Brush / Pencil) — shared by both drawing engines
+// ============================================================================
+// Tuned against a real pen/brush/pencil study (2026-07-21). What that study
+// showed, and what these implement:
+//
+//   BRUSH — speed is the main modulator. A slow stroke is fat and solid; a
+//           quick one is thinner AND goes dry, breaking into streaks with a
+//           hairline tail. Previously width came from pressure alone, so every
+//           brush mark had the same solid body however fast it was drawn.
+//   PEN   — very nearly uniform width, but NOT a clean vector line: the real
+//           line wavers slightly and skips ink here and there, more so when
+//           moving fast. Ours was mathematically perfect, which is most of why
+//           it read as digital.
+//   PENCIL— light, granular, and registered to the PAPER, with the grain
+//           running along the stroke. Ours scattered random dots in a disc,
+//           which gives noise rather than tooth and slides with the brush.
+//
+// Speed is derived from SEGMENT LENGTH rather than timestamps. Pointer samples
+// arrive at a roughly fixed rate, so how far the pointer moved between two
+// samples is how fast it was going — and unlike a timestamp that survives the
+// wire, so a remote replay modulates identically with nothing extra sent.
+// Everything else here is keyed off POSITION for the same reason (and so the
+// paper texture stays registered to the sheet across strokes).
+
+function strokeSpeed(dist) {
+    return Math.min(1, dist / (16 * PAPER_SCALE));
+}
+
+// Lays a stroke down as thin lines running ALONG it, spread across its width.
+// This is the shape of the whole idea: dry media breaks up longitudinally —
+// a fast brush leaves parallel streaks with paper showing between them, and
+// graphite catches the tooth in ridges that run with the stroke. Gating whole
+// sub-steps on and off instead (the first attempt) can only ever produce
+// dashes ACROSS the stroke, which reads as Morse code, not as dry media.
+// With spacing below lane width the lanes overlap into a solid mark, so the
+// same routine covers "slow and solid" and "fast and streaky" continuously.
+function laneStroke(ctx, from, to, halfWidth, laneCount, perLane) {
+    const dx = to.x - from.x, dy = to.y - from.y;
+    const dist = Math.hypot(dx, dy) || 0.01;
+    const nx = -dy / dist, ny = dx / dist;      // across travel
+    for (let i = 0; i < laneCount; i++) {
+        const off = ((i + 0.5) / laneCount - 0.5) * 2 * halfWidth;
+        const ax = from.x + nx * off, ay = from.y + ny * off;
+        const bx = to.x + nx * off, by = to.y + ny * off;
+        perLane(ax, ay, bx, by, off, (ax + bx) / 2, (ay + by) / 2);
+    }
+}
+
+// Walks a segment in short sub-steps, calling back with each piece plus the
+// position-derived values the basic tools modulate on.
+function walkSegment(from, to, stepPx, fn) {
+    const dx = to.x - from.x, dy = to.y - from.y;
+    const dist = Math.hypot(dx, dy);
+    const subs = Math.max(1, Math.ceil(dist / Math.max(0.5, stepPx)));
+    for (let s = 0; s < subs; s++) {
+        const ta = s / subs, tb = (s + 1) / subs;
+        fn(from.x + dx * ta, from.y + dy * ta, from.x + dx * tb, from.y + dy * tb, (ta + tb) / 2);
+    }
+}
+
+// Pen: essentially a clean line. The study shows a technical pen stays very
+// nearly uniform — the only tells are a slight waver in weight and, on quick
+// strokes, a marginally lighter/thinner line. Deliberately restrained: an
+// earlier attempt at "irregularity" cut the line into beads, which is far
+// further from a real pen than the perfectly smooth line it replaced.
+function basicPenSegment(ctx, color, from, to, fromWidth, toWidth) {
+    const speed = strokeSpeed(Math.hypot(to.x - from.x, to.y - from.y));
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.globalAlpha = 1 - 0.15 * speed;              // quick strokes bite less
+    walkSegment(from, to, 3 * PAPER_SCALE, (ax, ay, bx, by, t) => {
+        const wob = 0.94 + 0.12 * paperValueNoise((ax + bx) / 18 + 5.5, (ay + by) / 18 + 5.5);
+        ctx.lineWidth = Math.max(0.4, (fromWidth + (toWidth - fromWidth) * t) * wob * (1 - 0.12 * speed));
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(bx, by);
+        ctx.stroke();
+    });
+    ctx.restore();
+}
+
+// Brush: slow is fat and solid, quick is thinner and goes dry — breaking into
+// streaks that run WITH the stroke, exactly as in the study. Lanes overlap at
+// low speed so a deliberate mark is still a solid black stroke.
+function basicBrushSegment(ctx, color, from, to, fromWidth, toWidth) {
+    const speed = strokeSpeed(Math.hypot(to.x - from.x, to.y - from.y));
+    const thin = 1 - 0.4 * speed;
+    const dryness = Math.max(0, speed - 0.45) / 0.55;   // only really dries out when moving
+    const w = ((fromWidth + toWidth) / 2) * thin;
+    const half = Math.max(0.3, w / 2);
+
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    if (dryness <= 0.01) {                              // solid: one clean stroke
+        ctx.lineWidth = Math.max(0.4, w);
+        ctx.beginPath();
+        ctx.moveTo(from.x, from.y);
+        ctx.lineTo(to.x, to.y);
+        ctx.stroke();
+        ctx.restore();
+        return;
+    }
+
+    // Sub-step ALONG the stroke as well as across it. Gating a whole lane over
+    // a whole segment switches it on and off in slabs — a 20px segment becomes
+    // a 20px rectangle, which came out looking like a barcode. Deciding per
+    // small piece is what makes the break-up read as fine streaks instead.
+    // Capped. Lane count follows stroke width, and a big brush at full
+    // pressure on a scaled canvas would otherwise ask for a couple of hundred
+    // lanes per sub-step — enough to stall a stroke on an iPad. The cap only
+    // binds on very fat marks, where individual streaks aren't resolvable
+    // anyway. Comes back out if live rendering ever drops to 1x (see the
+    // 300 DPI export plan).
+    const lanes = Math.min(40, Math.max(4, Math.round(half * 3)));
+    ctx.lineWidth = Math.max(0.5, (half * 2) / lanes * 2.1);
+    walkSegment(from, to, 3 * PAPER_SCALE, (ax, ay, bx, by) => {
+        laneStroke(ctx, { x: ax, y: ay }, { x: bx, y: by }, half, lanes, (lx, ly, ex, ey, off, mx, my) => {
+            // Sampled COARSE along the sheet but decorrelated per lane (the
+            // `off` term). Gating on fine paper tooth alone made the mark
+            // crumble every few pixels; a real dry brush leaves long parallel
+            // streaks, so the gate has to vary slowly along the stroke and
+            // sharply across it. Still position-keyed, so repeat passes break
+            // in the same places.
+            const streak = paperValueNoise(mx / 24 + off * 0.85, my / 24 + off * 0.85);
+            if (streak < 0.58 * dryness) return;
+            // The heel of the brush holds ink longer than its edges do.
+            const edge = 1 - Math.abs(off) / (half + 0.001);
+            if (edge < 0.3 * dryness * streak) return;
+            ctx.beginPath();
+            ctx.moveTo(lx, ly);
+            ctx.lineTo(ex, ey);
+            ctx.stroke();
+        });
+    });
+    ctx.restore();
+}
+
+// Pencil: light, continuous, and registered to the PAPER — graphite catches
+// the sheet's high points, so the grain runs along the stroke and a second
+// pass darkens the same ridges. The old version scattered random dots in a
+// disc, which reads as video noise and slides along with the brush; it was
+// also far darker than the reference. Kept continuous on purpose: real pencil
+// is faint but unbroken, so tooth modulates DARKNESS here and only drops a
+// lane outright where the paper is genuinely low.
+function basicPencilSegment(ctx, color, from, to, width) {
+    const speed = strokeSpeed(Math.hypot(to.x - from.x, to.y - from.y));
+    const r = Math.max(0.6, width) / 2;
+    const lanes = Math.min(26, Math.max(3, Math.round(r * 2.4)));
+
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineCap = 'round';
+    ctx.lineWidth = Math.max(0.45, (r * 2) / lanes * 1.5);
+    walkSegment(from, to, 2.5 * PAPER_SCALE, (ax, ay, bx, by) => {
+        const dxs = bx - ax, dys = by - ay;
+        const dl = Math.hypot(dxs, dys) || 0.01;
+        const nx = -dys / dl, ny = dxs / dl;
+        for (let i = 0; i < lanes; i++) {
+            // Jitter each lane sideways. Perfectly parallel lanes plus regular
+            // sub-steps weave into a visible comb/grid; a position-keyed nudge
+            // (still paper-locked, so repeat passes agree) breaks that up into
+            // something that reads as grain.
+            const base = ((i + 0.5) / lanes - 0.5) * 2 * r;
+            const jit = (paperValueNoise((ax + i * 13) / 6, (ay + i * 13) / 6) - 0.5) * (r / lanes) * 2.4;
+            const off = base + jit;
+            const lx = ax + nx * off, ly = ay + ny * off;
+            const ex = bx + nx * off, ey = by + ny * off;
+            const tooth = paperTooth((lx + ex) / 2, (ly + ey) / 2);
+            if (tooth < 0.2) continue;                   // a genuine hollow
+            const edge = 1 - Math.abs(off) / (r + 0.001);
+            if (edge <= 0) continue;
+            ctx.globalAlpha = Math.min(0.5, (0.12 + tooth * 0.38) * (0.4 + edge * 0.6) * (1 - 0.35 * speed));
+            ctx.beginPath();
+            ctx.moveTo(lx, ly);
+            ctx.lineTo(ex, ey);
+            ctx.stroke();
+        }
+    });
+    ctx.restore();
+}
+
 // ---- Dragged-tip (rake) rendering ----
 //
 // Stamping a texture repeatedly along a path CANNOT produce a streak, however
