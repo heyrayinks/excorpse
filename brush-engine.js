@@ -138,15 +138,22 @@ function inkStampQuillBlob(ctx, color, size, x, y) {
 // `wet: true` presets (watercolor washes) don't paint the layer directly:
 // stamps accumulate in an offscreen "wet buffer" at full strength during
 // the stroke (previewed on a transparent overlay canvas), then composite
-// onto the layer ONCE on lift-off with globalAlpha = preset.opacity and
-// 'multiply' — so a single stroke reads as one even wash with a darker
-// wet rim, and separate overlapping strokes genuinely darken each other
-// the way layered watercolor does.
+// onto the layer ONCE on lift-off via compositeWetStroke() — so a single
+// stroke reads as one even wash, and separate overlapping strokes darken
+// each other the way layered watercolor does.
+//
+// The wash's CHARACTER (edge rim, granulation) is applied at that composite
+// step, not baked into the tip — see compositeWetStroke for why. Wet tips
+// are therefore deliberately flat-topped: their job is to build an even
+// field of alpha, nothing else.
+//   rim        — strength of the dried-edge darkening (0 = off)
+//   rimWidth   — how far that rim reaches inward, px at RENDER_SCALE 1
+//   granulate  — strength of paper-locked pigment settling (0 = off)
 const BRUSH_PRESETS = {
-    wc_wash:      { family: 'Watercolor', label: 'Wet Wash',     tip: 'wetDisc',     spacing: 0.35, opacity: 0.38, wet: true,  sizeRange: [8, 80],  size: 30, pressureSize: 0.5, scatter: 0.05, angle: 'none' },
-    wc_bleed:     { family: 'Watercolor', label: 'Soft Bleed',   tip: 'softDisc',    spacing: 0.30, opacity: 0.30, wet: true,  sizeRange: [10, 90], size: 42, pressureSize: 0.5, scatter: 0.18, angle: 'none' },
+    wc_wash:      { family: 'Watercolor', label: 'Wet Wash',     tip: 'wetDisc',     spacing: 0.18, opacity: 0.38, wet: true,  rim: 2.2, rimWidth: 4,  sizeRange: [8, 80],  size: 30, pressureSize: 0.5, scatter: 0.05, angle: 'none' },
+    wc_bleed:     { family: 'Watercolor', label: 'Soft Bleed',   tip: 'softDisc',    spacing: 0.16, opacity: 0.30, wet: true,  rim: 0.8, rimWidth: 10, sizeRange: [10, 90], size: 42, pressureSize: 0.5, scatter: 0.08, angle: 'none' },
     wc_dry:       { family: 'Watercolor', label: 'Dry Brush',    tip: 'toothCoarse', spacing: 0.22, opacity: 0.55, wet: false, sizeRange: [6, 60],  size: 22, pressureSize: 0.6, scatter: 0.04, angle: 'follow' },
-    wc_granulate: { family: 'Watercolor', label: 'Granulating',  tip: 'granDisc',    spacing: 0.35, opacity: 0.42, wet: true,  sizeRange: [8, 80],  size: 32, pressureSize: 0.5, scatter: 0.06, angle: 'none' },
+    wc_granulate: { family: 'Watercolor', label: 'Granulating',  tip: 'granDisc',    spacing: 0.18, opacity: 0.42, wet: true,  rim: 1.8, rimWidth: 4, granulate: 0.85, sizeRange: [8, 80],  size: 32, pressureSize: 0.5, scatter: 0.06, angle: 'none' },
     // Charcoal: dry stamping, low per-stamp alpha that builds up with
     // passes, grain carved from the tip, texture rotating with travel.
     ch_willow:     { family: 'Charcoal', label: 'Willow',          tip: 'toothSoft', spacing: 0.25, opacity: 1, stampAlpha: 0.28, wet: false, sizeRange: [6, 70],  size: 26, pressureSize: 0.45, scatter: 0.06, angle: 'follow' },
@@ -250,11 +257,16 @@ function buildTipMask(tip, s) {
     } else {
         const grad = ctx.createRadialGradient(half, half, 0, half, half, half);
         if (tip === 'wetDisc' || tip === 'granDisc') {
-            // Interior wash with a stronger ring near the edge — composited,
-            // that ring is the classic watercolor wet rim.
-            grad.addColorStop(0, 'rgba(0,0,0,0.55)');
-            grad.addColorStop(0.65, 'rgba(0,0,0,0.6)');
-            grad.addColorStop(0.85, 'rgba(0,0,0,0.9)');
+            // FLAT-TOPPED with a short feather. These used to carry a bright
+            // ring at 0.85 to fake the watercolor wet rim, which was exactly
+            // wrong: a rim on every stamp turns a stroke into a visible chain
+            // of overlapping circles (scalloped edges, ribboned washes) — real
+            // watercolor has ONE rim, around the perimeter of the whole dried
+            // shape. That now happens in compositeWetStroke. A flat top also
+            // means densely-spaced stamps saturate to an even field instead of
+            // building lumpy density.
+            grad.addColorStop(0, 'rgba(0,0,0,0.9)');
+            grad.addColorStop(0.78, 'rgba(0,0,0,0.9)');
             grad.addColorStop(1, 'rgba(0,0,0,0)');
         } else if (tip === 'toothSoft' || tip === 'toothFine') {
             // Harder, denser base for dry media — the grain carved below
@@ -263,8 +275,12 @@ function buildTipMask(tip, s) {
             grad.addColorStop(0.75, 'rgba(0,0,0,0.8)');
             grad.addColorStop(1, 'rgba(0,0,0,0)');
         } else { // softDisc and the base for toothCoarse
+            // softDisc keeps a longer feather than the flat wet tips (it's the
+            // wet-on-wet brush), but not the old 0.6-at-60% ramp, which spread
+            // density so gradually that strokes read as airbrushed cloud with
+            // no edge anywhere.
             grad.addColorStop(0, 'rgba(0,0,0,0.9)');
-            grad.addColorStop(0.6, 'rgba(0,0,0,0.6)');
+            grad.addColorStop(0.55, 'rgba(0,0,0,0.82)');
             grad.addColorStop(1, 'rgba(0,0,0,0)');
         }
         ctx.fillStyle = grad;
@@ -272,18 +288,13 @@ function buildTipMask(tip, s) {
     }
 
     // Texture passes carve paper-tooth holes out of the base disc.
-    if (tip === 'granDisc') {
-        ctx.globalCompositeOperation = 'destination-out';
-        const dots = Math.max(12, Math.round(s * s / 60));
-        for (let i = 0; i < dots; i++) {
-            const a = Math.random() * Math.PI * 2;
-            const d = Math.sqrt(Math.random()) * half;
-            ctx.globalAlpha = 0.25 + Math.random() * 0.35;
-            ctx.beginPath();
-            ctx.arc(half + Math.cos(a) * d, half + Math.sin(a) * d, Math.max(0.6, s * (0.02 + Math.random() * 0.05)), 0, Math.PI * 2);
-            ctx.fill();
-        }
-    } else if (tip === 'toothCoarse') {
+    //
+    // granDisc deliberately has NO carving pass any more. Grain punched into
+    // the tip travels with the brush, so the "paper texture" slid around with
+    // the stroke instead of staying registered to the sheet — the giveaway
+    // that it wasn't paper at all. Granulation is now a paper-locked pass in
+    // compositeWetStroke; granDisc is just the flat wet tip that opts into it.
+    if (tip === 'toothCoarse') {
         ctx.globalCompositeOperation = 'destination-out';
         const dots = Math.max(20, Math.round(s * s / 30));
         for (let i = 0; i < dots; i++) {
@@ -425,6 +436,148 @@ function stampAlongSegment(ctx, presetId, color, from, to, fromW, toW, state) {
         );
     }
     state.residual = sinceLast + (dist - pos);
+}
+
+// ---- Wet stroke composite (where a wash becomes watercolor) ----
+//
+// Called once per wet stroke, on lift, by BOTH drawing engines, the Open
+// Canvas remote-replay path, and the dev swatch harness. The buffer holds the
+// stroke as an even field of alpha at full strength; everything that makes it
+// read as watercolor rather than translucent ink happens here, for one reason:
+// these are properties of the whole dried SHAPE, not of any single stamp.
+//
+//   1. the wash itself   — multiply at preset.opacity (unchanged)
+//   2. the dried edge    — pigment migrates outward as water evaporates and
+//                          strands at the boundary, leaving the perimeter
+//                          darker than the middle. THE single strongest tell
+//                          of real watercolor.
+//   3. granulation       — heavy pigments settle into the hollows of the
+//                          paper, so the mottling is registered to the sheet
+//                          and does not move with the brush.
+//
+// `scale` is RENDER_SCALE, so rim width is a constant physical size rather
+// than shrinking to a hairline at 300 DPI.
+function compositeWetStroke(destCtx, buffer, preset, scale) {
+    const w = buffer.width, h = buffer.height;
+    scale = scale || 1;
+
+    destCtx.save();
+    destCtx.globalCompositeOperation = 'multiply';
+    destCtx.globalAlpha = preset.opacity;
+    destCtx.drawImage(buffer, 0, 0);
+
+    // --- Dried edge ---
+    // The rim band is  A * (1 - blur(A))  where A is the stroke's alpha:
+    // ~0 deep inside (blur is still ~1 there), rising to a peak just inside
+    // the boundary, and 0 outside it. destination-out computes exactly that
+    // in one drawImage, since it resolves to dstAlpha * (1 - srcAlpha).
+    //
+    if (preset.rim) {
+        const rimPx = Math.max(2, Math.round((preset.rimWidth || 7) * scale));
+        const rim = document.createElement('canvas');
+        rim.width = w; rim.height = h;
+        const rctx = rim.getContext('2d');
+        rctx.drawImage(buffer, 0, 0);
+        rctx.globalCompositeOperation = 'destination-out';
+        rctx.drawImage(blurredAlpha(buffer, rimPx), 0, 0);
+
+        // rim is a multiplier on the wash opacity and is allowed to exceed 1
+        // (the band peaks at ~0.5 alpha, so it needs the headroom to read).
+        destCtx.globalAlpha = Math.min(1, preset.opacity * preset.rim);
+        destCtx.drawImage(rim, 0, 0);
+    }
+
+    // --- Granulation ---
+    // Knock holes in a copy of the stroke using a canvas-fixed noise field,
+    // then lay that copy down as extra pigment: what survives is the paint
+    // that settled into the paper's low spots. Because the noise is addressed
+    // in canvas coordinates, two strokes crossing the same patch of paper
+    // granulate into the SAME hollows, which is what sells it.
+    if (preset.granulate) {
+        const grain = paperGrainField(w, h);
+        const gran = document.createElement('canvas');
+        gran.width = w; gran.height = h;
+        const gctx = gran.getContext('2d');
+        gctx.drawImage(buffer, 0, 0);
+        gctx.globalCompositeOperation = 'destination-out';
+        gctx.drawImage(grain, 0, 0, w, h);
+
+        destCtx.globalAlpha = preset.opacity * preset.granulate;
+        destCtx.drawImage(gran, 0, 0);
+    }
+
+    destCtx.restore();
+}
+
+// Blur used to find a stroke's boundary. Prefers the native canvas filter,
+// which is a true symmetric gaussian; falls back to repeated halving for
+// browsers without it (Safari below 17), since iPad matters here.
+//
+// The fallback halves in STAGES rather than resampling straight down to
+// 1/radius in one step: a single big downscale quantises the blur to a grid
+// that size, which lands a stroke's two edges at different offsets within a
+// grid cell and produced a rim on one side of a stroke and not the other.
+let canvasFilterOk = null;
+function blurredAlpha(src, radius) {
+    const w = src.width, h = src.height;
+    const out = document.createElement('canvas');
+    out.width = w; out.height = h;
+    const octx = out.getContext('2d');
+
+    if (canvasFilterOk === null) {
+        const probe = document.createElement('canvas').getContext('2d');
+        probe.filter = 'blur(2px)';
+        canvasFilterOk = probe.filter === 'blur(2px)';
+    }
+    if (canvasFilterOk) {
+        octx.filter = `blur(${radius}px)`;
+        octx.drawImage(src, 0, 0);
+        octx.filter = 'none';
+        return out;
+    }
+
+    let cur = src, cw = w, ch = h;
+    for (let r = radius; r > 1; r /= 2) {
+        const nw = Math.max(1, Math.round(cw / 2)), nh = Math.max(1, Math.round(ch / 2));
+        const step = document.createElement('canvas');
+        step.width = nw; step.height = nh;
+        const sctx = step.getContext('2d');
+        sctx.imageSmoothingEnabled = true;
+        sctx.drawImage(cur, 0, 0, nw, nh);
+        cur = step; cw = nw; ch = nh;
+    }
+    octx.imageSmoothingEnabled = true;
+    octx.drawImage(cur, 0, 0, w, h);
+    return out;
+}
+
+// Lazily-built, cached noise field covering the whole canvas — the paper's
+// tooth. Generated at a quarter resolution and upscaled at use: clumps land
+// at roughly the 3-5px scale of real cold-press tooth, it costs a fraction of
+// a full-size ImageData pass (which would be 34MB at 300 DPI), and unlike a
+// repeating tile there are no seams to spot.
+const paperGrainCache = new Map();
+function paperGrainField(w, h) {
+    const key = w + 'x' + h;
+    let field = paperGrainCache.get(key);
+    if (field) return field;
+    if (paperGrainCache.size > 4) paperGrainCache.clear();
+
+    const gw = Math.max(1, Math.round(w / 4)), gh = Math.max(1, Math.round(h / 4));
+    field = document.createElement('canvas');
+    field.width = gw; field.height = gh;
+    const ctx = field.getContext('2d');
+    const img = ctx.createImageData(gw, gh);
+    const d = img.data;
+    for (let i = 0; i < gw * gh; i++) {
+        // Biased low so most of the wash survives and the grain reads as
+        // scattered settling rather than a screen door over the whole stroke.
+        const v = Math.pow(Math.random(), 1.7);
+        d[i * 4 + 3] = Math.round(v * 235);
+    }
+    ctx.putImageData(img, 0, 0);
+    paperGrainCache.set(key, field);
+    return field;
 }
 
 // Pressure -> stamp width, per preset dynamics. Mouse/touch sit at a

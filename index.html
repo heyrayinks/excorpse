@@ -1841,12 +1841,7 @@
             previewCtx.globalAlpha = 1;
         }
         function finishWetStroke(preset) {
-            const ctx = ctxs[S.activeLayer];
-            ctx.globalCompositeOperation = 'multiply';
-            ctx.globalAlpha = preset.opacity;
-            ctx.drawImage(wetBufferCanvas, 0, 0);
-            ctx.globalAlpha = 1;
-            ctx.globalCompositeOperation = 'source-over';
+            compositeWetStroke(ctxs[S.activeLayer], wetBufferCanvas, preset, RENDER_SCALE);
             wetBufferCtx.clearRect(0, 0, CANVAS_W, CANVAS_H);
             previewCtx.clearRect(0, 0, CANVAS_W, CANVAS_H);
             wetActive = false;
@@ -2432,11 +2427,7 @@
             } else if (op.phase === 'up') {
                 if (preset.wet) {
                     const buf = ocWetBufferFor(key);
-                    ctx.globalCompositeOperation = 'multiply';
-                    ctx.globalAlpha = preset.opacity;
-                    ctx.drawImage(buf, 0, 0);
-                    ctx.globalAlpha = 1;
-                    ctx.globalCompositeOperation = 'source-over';
+                    compositeWetStroke(ctx, buf, preset, 1);
                     buf.getContext('2d').clearRect(0, 0, BASE_CANVAS_W, BASE_CANVAS_H);
                 }
                 ocRemoteStrokeState.delete(key);
@@ -2958,12 +2949,8 @@
             previewCtx.globalAlpha = 1;
         }
         function finishWetStroke(preset) {
-            const lctx = ctxs[S.activeLayer];
-            lctx.globalCompositeOperation = 'multiply';
-            lctx.globalAlpha = preset.opacity;
-            lctx.drawImage(wetBufferCanvas, 0, 0);
-            lctx.globalAlpha = 1;
-            lctx.globalCompositeOperation = 'source-over';
+            // Open Canvas is always at base resolution, so scale is 1.
+            compositeWetStroke(ctxs[S.activeLayer], wetBufferCanvas, preset, 1);
             wetBufferCtx.clearRect(0, 0, CANVAS_W, CANVAS_H);
             previewCtx.clearRect(0, 0, CANVAS_W, CANVAS_H);
             wetActive = false;

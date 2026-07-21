@@ -130,7 +130,12 @@ function strokesFor(test) {
 // Mirrors the app exactly: dry presets stamp onto the target; wet presets
 // accumulate in an offscreen buffer at full strength and composite ONCE per
 // stroke with multiply at preset.opacity (see finishWetStroke in index.html).
-function renderPresetCell(ctx, presetId, test, ox, oy, color) {
+// The wet buffer is allocated at FULL SHEET SIZE rather than per cell, exactly
+// as the app allocates it at full canvas size. That matters now that the rim
+// and the granulation field are computed in canvas coordinates: a cell-sized
+// buffer would put the paper grain in a different place for every cell, and
+// hand each swatch its own private origin.
+function renderPresetCell(ctx, presetId, test, ox, oy, color, sheet) {
   const preset = BRUSH_PRESETS[presetId];
   const base = preset.size;
 
@@ -138,31 +143,26 @@ function renderPresetCell(ctx, presetId, test, ox, oy, color) {
     let target = ctx, buf = null;
     if (preset.wet) {
       buf = document.createElement('canvas');
-      buf.width = CELL_W; buf.height = CELL_H;
+      buf.width = sheet.width; buf.height = sheet.height;
       target = buf.getContext('2d');
     }
 
     const state = { residual: 0 };
     const widthAt = i => presetWidthFor(preset, base, { pointerType: 'pen', pressure: stroke.pressures[i] });
-    const local = p => preset.wet ? p : { x: p.x + ox, y: p.y + oy };
+    const at = p => ({ x: p.x + ox, y: p.y + oy });
 
     if (stroke.pts.length === 1) {
-      const p = local(stroke.pts[0]);
+      const p = at(stroke.pts[0]);
       stampAlongSegment(target, presetId, color, p, p, widthAt(0), widthAt(0), state);
     } else {
       for (let i = 1; i < stroke.pts.length; i++) {
         stampAlongSegment(target, presetId, color,
-          local(stroke.pts[i - 1]), local(stroke.pts[i]), widthAt(i - 1), widthAt(i), state);
+          at(stroke.pts[i - 1]), at(stroke.pts[i]), widthAt(i - 1), widthAt(i), state);
       }
     }
 
-    if (preset.wet) {
-      ctx.save();
-      ctx.globalCompositeOperation = 'multiply';
-      ctx.globalAlpha = preset.opacity;
-      ctx.drawImage(buf, ox, oy);
-      ctx.restore();
-    }
+    // Same composite the app runs on lift — rim and granulation included.
+    if (preset.wet) compositeWetStroke(ctx, buf, preset, 1);
   }
 }
 
@@ -319,7 +319,7 @@ function renderSheet(family, brushes) {
       ctx.beginPath();
       ctx.rect(ox, oy, CELL_W, CELL_H);
       ctx.clip();
-      if (BRUSH_PRESETS[id]) renderPresetCell(ctx, id, t.id, ox, oy, color);
+      if (BRUSH_PRESETS[id]) renderPresetCell(ctx, id, t.id, ox, oy, color, canvas);
       else renderInkCell(ctx, id, t.id, ox, oy, color);
       ctx.restore();
     });

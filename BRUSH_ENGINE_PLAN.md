@@ -56,11 +56,29 @@ Everything else below is still in `index.html`.
   — the one shared stroke walker (residual-carry cadence, smoothed direction
   for rotated tips). Used by BOTH engines and by remote replay.
 - **Wet compositing** — per-engine lazy full-size buffer + overlay preview
-  canvas; stroke composites onto the layer once on lift with
-  `multiply` at `preset.opacity` (overlapping washes genuinely darken).
+  canvas; on lift the stroke goes through the shared
+  `compositeWetStroke()` (all three call sites — both engines and the Open
+  Canvas remote-replay path — route through it). That applies, in order:
+  the wash itself (`multiply` at `preset.opacity`, so overlapping washes
+  genuinely darken), the **dried edge rim**, and **granulation**.
   Open Canvas remotes use pooled per-player-order buffers
   (`ocWetBuffers`) composited on the sender's `up` op — remote wet strokes
   appear on lift, by design.
+- **Rim and granulation are composite-time, NOT tip-time** (reworked
+  2026-07-21). Both are properties of the whole dried shape, and baking
+  them into the tip was the single biggest thing making watercolor look
+  fake: a rim on every stamp turned strokes into visible chains of
+  circles, and tip-carved grain slid along with the brush instead of
+  staying registered to the paper. The rim band is `A * (1 - blur(A))`,
+  computed with one `destination-out` drawImage; `blurredAlpha()` prefers
+  the native canvas filter and falls back to *staged* halving (a single
+  big downscale quantises to a grid and yields a rim on one side of a
+  stroke only — measured). Granulation knocks holes in a copy of the
+  stroke using `paperGrainField()`, a cached canvas-sized noise field
+  addressed in canvas coordinates, so two strokes crossing the same patch
+  of paper settle into the same hollows.
+- **Wet tips are flat-topped on purpose** — their only job is to build an
+  even field of alpha for the composite to shape. Don't add edge rings.
 - **Menu** — `toolMenuHtml()` groups by `family` with section headers
   (headers omitted when only Basics is visible). Clicks are DELEGATED on
   `#toolMenu`; `refreshToolMenu()` rebuilds it in place when the async
