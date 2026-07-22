@@ -159,25 +159,25 @@ const BRUSH_PRESETS = {
     // Pencil and Brush pulled it's the only broad-mark tool left. `icon` is
     // explicit because Basics has no family glyph.
     ink_nib:      { family: 'Basics', free: true, icon: '/graphics/Exquisite-corpse-tool-icons-10-QUILL.svg', label: 'Chisel Nib', nib: true, nibAngle: -0.7, wet: false, sizeRange: [3, 34], size: 11, pressureSize: 0.5 },
-    wc_wash:      { family: 'Watercolor', label: 'Wet Wash',     tip: 'wetDisc',     spacing: 0.18, opacity: 0.38, wet: true,  rim: 2.2, rimWidth: 4,  sizeRange: [8, 80],  size: 30, pressureSize: 0.75, scatter: 0.05, angle: 'none' },
-    wc_bleed:     { family: 'Watercolor', label: 'Soft Bleed',   tip: 'softDisc',    spacing: 0.16, opacity: 0.30, wet: true,  rim: 0.8, rimWidth: 10, sizeRange: [10, 90], size: 42, pressureSize: 0.7, scatter: 0.08, angle: 'none' },
-    wc_dry:       { family: 'Watercolor', label: 'Dry Brush',    rake: true, grains: 46, tooth: 0.75, grit: 0.42, gritScale: 0.13, stampAlpha: 0.62, wet: false, sizeRange: [6, 60],  size: 22, pressureSize: 0.8 },
-    wc_granulate: { family: 'Watercolor', label: 'Granulating',  tip: 'granDisc',    spacing: 0.18, opacity: 0.42, wet: true,  rim: 1.8, rimWidth: 4, granulate: 0.85, sizeRange: [8, 80],  size: 32, pressureSize: 0.75, scatter: 0.06, angle: 'none' },
+    wc_wash:      { retired: true, family: 'Watercolor', label: 'Wet Wash',     tip: 'wetDisc',     spacing: 0.18, opacity: 0.38, wet: true,  rim: 2.2, rimWidth: 4,  sizeRange: [8, 80],  size: 30, pressureSize: 0.75, scatter: 0.05, angle: 'none' },
+    wc_bleed:     { retired: true, family: 'Watercolor', label: 'Soft Bleed',   tip: 'softDisc',    spacing: 0.16, opacity: 0.30, wet: true,  rim: 0.8, rimWidth: 10, sizeRange: [10, 90], size: 42, pressureSize: 0.7, scatter: 0.08, angle: 'none' },
+    wc_dry:       { retired: true, family: 'Watercolor', label: 'Dry Brush',    rake: true, grains: 46, tooth: 0.75, grit: 0.42, gritScale: 0.13, stampAlpha: 0.62, wet: false, sizeRange: [6, 60],  size: 22, pressureSize: 0.8 },
+    wc_granulate: { retired: true, family: 'Watercolor', label: 'Granulating',  tip: 'granDisc',    spacing: 0.18, opacity: 0.42, wet: true,  rim: 1.8, rimWidth: 4, granulate: 0.85, sizeRange: [8, 80],  size: 32, pressureSize: 0.75, scatter: 0.06, angle: 'none' },
     // Charcoal and Pastel are all dragged tips (rake: true) — see
     // rakeAlongSegment. `grains` is roughly how many ridges touch the paper,
     // `grit`/`gritScale` how readily they lift and how fine the resulting
     // break-up is. A high grit with few grains is a bald, scratchy stick; a low
     // grit with many is a dense soft one.
-    ch_willow:     { family: 'Charcoal', label: 'Willow',          rake: true, grains: 44, tooth: 0.8, grit: 0.34, gritScale: 0.10, stampAlpha: 0.34, wet: false, sizeRange: [6, 70],  size: 26, pressureSize: 0.7 },
-    ch_compressed: { family: 'Charcoal', label: 'Compressed',      rake: true, grains: 60, tooth: 0.55, grit: 0.16, gritScale: 0.07, stampAlpha: 0.72, wet: false, sizeRange: [4, 60],  size: 18, pressureSize: 0.75 },
-    ch_pencil:     { family: 'Charcoal', label: 'Charcoal Pencil', rake: true, grains: 22, tooth: 0.35, grit: 0.22, gritScale: 0.16, stampAlpha: 0.6,  wet: false, sizeRange: [2, 24],  size: 8,  pressureSize: 0.8 },
-    ch_stick:      { family: 'Charcoal', label: 'Side Stick',      rake: true, grains: 72, tooth: 0.85, grit: 0.40, gritScale: 0.06, stampAlpha: 0.52, wet: false, sizeRange: [12, 90], size: 40, pressureSize: 0.6 },
+    ch_willow:     { retired: true, family: 'Charcoal', label: 'Willow',          rake: true, grains: 44, tooth: 0.8, grit: 0.34, gritScale: 0.10, stampAlpha: 0.34, wet: false, sizeRange: [6, 70],  size: 26, pressureSize: 0.7 },
+    ch_compressed: { retired: true, family: 'Charcoal', label: 'Compressed',      rake: true, grains: 60, tooth: 0.55, grit: 0.16, gritScale: 0.07, stampAlpha: 0.72, wet: false, sizeRange: [4, 60],  size: 18, pressureSize: 0.75 },
+    ch_pencil:     { retired: true, family: 'Charcoal', label: 'Charcoal Pencil', rake: true, grains: 22, tooth: 0.35, grit: 0.22, gritScale: 0.16, stampAlpha: 0.6,  wet: false, sizeRange: [2, 24],  size: 8,  pressureSize: 0.8 },
+    ch_stick:      { retired: true, family: 'Charcoal', label: 'Side Stick',      rake: true, grains: 72, tooth: 0.85, grit: 0.40, gritScale: 0.06, stampAlpha: 0.52, wet: false, sizeRange: [12, 90], size: 40, pressureSize: 0.6 },
     // Pastel: waxy/chalky, with the colour wobble now carried per contact
     // ridge rather than per stamp.
-    op_soft:    { family: 'Pastel', label: 'Soft Pastel', rake: true, grains: 50, tooth: 0.7, grit: 0.30, gritScale: 0.09, stampAlpha: 0.72, colorJitter: 0.05, wet: false, sizeRange: [6, 70],  size: 24, pressureSize: 0.72 },
-    op_heavy:   { family: 'Pastel', label: 'Oil Pastel',  rake: true, grains: 66, tooth: 0.4, grit: 0.12, gritScale: 0.05, stampAlpha: 0.92, colorJitter: 0.07, wet: false, sizeRange: [6, 70],  size: 26, pressureSize: 0.7 },
-    op_scumble: { family: 'Pastel', label: 'Scumble',     rake: true, grains: 32, tooth: 0.85, grit: 0.55, gritScale: 0.15, stampAlpha: 0.6,  colorJitter: 0.06, wet: false, sizeRange: [10, 90], size: 40, pressureSize: 0.6 },
-    op_chalk:   { family: 'Pastel', label: 'Chalk',       rake: true, grains: 46, tooth: 0.8, grit: 0.38, gritScale: 0.11, stampAlpha: 0.44, colorJitter: 0.08, wet: false, sizeRange: [6, 70],  size: 26, pressureSize: 0.72 },
+    op_soft:    { retired: true, family: 'Pastel', label: 'Soft Pastel', rake: true, grains: 50, tooth: 0.7, grit: 0.30, gritScale: 0.09, stampAlpha: 0.72, colorJitter: 0.05, wet: false, sizeRange: [6, 70],  size: 24, pressureSize: 0.72 },
+    op_heavy:   { retired: true, family: 'Pastel', label: 'Oil Pastel',  rake: true, grains: 66, tooth: 0.4, grit: 0.12, gritScale: 0.05, stampAlpha: 0.92, colorJitter: 0.07, wet: false, sizeRange: [6, 70],  size: 26, pressureSize: 0.7 },
+    op_scumble: { retired: true, family: 'Pastel', label: 'Scumble',     rake: true, grains: 32, tooth: 0.85, grit: 0.55, gritScale: 0.15, stampAlpha: 0.6,  colorJitter: 0.06, wet: false, sizeRange: [10, 90], size: 40, pressureSize: 0.6 },
+    op_chalk:   { retired: true, family: 'Pastel', label: 'Chalk',       rake: true, grains: 46, tooth: 0.8, grit: 0.38, gritScale: 0.11, stampAlpha: 0.44, colorJitter: 0.08, wet: false, sizeRange: [6, 70],  size: 26, pressureSize: 0.72 },
 };
 
 

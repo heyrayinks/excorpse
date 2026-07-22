@@ -161,8 +161,8 @@
         // people into expecting an ink SET. Kept (they're shipped subscriber
         // content) but filed where they belong. Wet Quill was retired outright
         // in favour of Chisel Nib — its blob pooling never read as a pen.
-        splat: { icon: '/graphics/Exquisite-corpse-tool-icons-08-SPLAT.svg', label: 'Ink Splat', subscriberOnly: true, family: 'Effects' },
-        splatter: { icon: '/graphics/Exquisite-corpse-tool-icons-09-SPLATTER.svg', label: 'Ink Splatter', subscriberOnly: true, family: 'Effects' },
+        splat: { icon: '/graphics/Exquisite-corpse-tool-icons-08-SPLAT.svg', label: 'Ink Splat', subscriberOnly: true, family: 'Effects', retired: true },
+        splatter: { icon: '/graphics/Exquisite-corpse-tool-icons-09-SPLATTER.svg', label: 'Ink Splatter', subscriberOnly: true, family: 'Effects', retired: true },
         eraser: { icon: '/graphics/Exquisite-corpse-tool-icons-05-ERASER.svg', label: 'Eraser' },
         fill: { icon: '/graphics/Exquisite-corpse-tool-icons-06-FILL.svg', label: 'Fill' },
     };
@@ -2248,6 +2248,7 @@
             label: p.label,
             subscriberOnly: !p.free,
             family: p.family,
+            retired: !!p.retired,
         };
     }
 
@@ -4885,19 +4886,21 @@
                         <!-- Shown in every state (subscribed or not): it's about the
                              brushes themselves, not the billing status. -->
                         <p class="text-xs text-gray-500 mb-3 leading-relaxed">
-                            The subscriber brushes are still in beta. They're being actively reworked —
-                            how they feel is likely to keep changing, and marks you make now may not look
-                            identical in a later version. Feedback very welcome.
+                            The subscriber brushes are <strong>temporarily unavailable</strong> — the
+                            Watercolor, Charcoal, Pastel and Effects sets are being rebuilt from scratch
+                            rather than patched, so they're out of the tool menu until they're good enough
+                            to stand next to the Pen and Chisel Nib. Anything you've already drawn with
+                            them is untouched. Feedback very welcome.
                         </p>
                         ${u.subscribed ? `
-                            <p class="text-sm text-gray-700 mb-1">✓ You're subscribed — 15 brushes across the Ink, Watercolor, Charcoal, Pastel &amp; Effects families are in your tool menu, and you'll get new brushes as they launch.</p>
+                            <p class="text-sm text-gray-700 mb-1">✓ You're subscribed — you'll get the rebuilt brush sets the moment they land, and every release after.</p>
                             ${u.subscriptionStatus === 'past_due' ? `<p class="text-sm text-red-600 mb-3">Your last payment failed — update your card to keep your subscription active.</p>` : ''}
                             ${SUBSCRIPTIONS_ENABLED && u.stripeSubscription ? `<button id="manageSubBtn" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg">Manage subscription</button>` : ''}
                         ` : `
                             ${!SUBSCRIPTIONS_ENABLED ? `
-                                <p class="text-sm text-gray-500 mb-3">Subscriptions aren't open yet — 15 subscriber brushes across five families (Ink, Watercolor, Charcoal, Pastel &amp; Effects) are ready and will unlock here soon.</p>
+                                <p class="text-sm text-gray-500 mb-3">Subscriptions aren't open yet. The brush sets they unlock are being rebuilt — they'll appear here once they're ready.</p>
                             ` : `
-                                <p class="text-sm text-gray-500 mb-3">$2.99/mo — unlocks 15 brushes today across the Ink, Watercolor, Charcoal, Pastel &amp; Effects families, plus new brushes as they're released. Cancel anytime; you'll keep the free brush set either way.</p>
+                                <p class="text-sm text-gray-500 mb-3">$2.99/mo — funds new brush sets as they're released. Cancel anytime; you'll keep the free brush set (Pen, Chisel Nib, Airbrush, Eraser, Fill) either way.</p>
                                 <button id="subscribeBtn" class="px-4 py-2 bg-[#ffec06] hover:bg-[#e6d405] text-black text-sm font-semibold rounded-lg">Subscribe</button>
                             `}
                             <div class="mt-4 pt-4 border-t border-gray-100">
