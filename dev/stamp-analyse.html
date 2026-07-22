@@ -1,0 +1,74 @@
+<meta charset="utf-8">
+<title>Stamp set analysis</title>
+<style>body{font:13px ui-monospace,monospace;background:#222;color:#ddd;padding:16px}</style>
+<h1>dry-brush set</h1>
+<pre id="log"></pre>
+<script>
+const log = m => document.getElementById('log').textContent += m + '\n';
+const load = src => new Promise((res, rej) => {
+  const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src;
+});
+const SETS = [['dry-brush', 5], ['brush-pen', 5], ['dry-brush-02', 10]];
+(async () => {
+ for (const [setName, count] of SETS) {
+  log('\n=== ' + setName + ' ===');
+  const rows = [];
+  for (let n = 1; n <= count; n++) {
+    const img = await load(`/graphics/stamps/${setName}/${setName}-${String(n).padStart(2,'0')}.png`);
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    // alpha from darkness (paper is white), same rule the loader uses
+    let sum = 0, sx = 0, sy = 0, n0 = 0, minX = 1e9, maxX = -1, minY = 1e9, maxY = -1;
+    let anyTransparent = false, maxChroma = 0;
+    // Paper and ink levels: photographed stamps rarely hit true 255/0, and a
+    // lifted black or grey paper costs contrast at the edges.
+    let paperLum = 0, darkestLum = 255;
+    const A = new Float32Array(c.width * c.height);
+    for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) {
+      const i = (y * c.width + x) * 4;
+      if (d[i + 3] < 250) anyTransparent = true;
+      const mx = Math.max(d[i], d[i+1], d[i+2]), mn = Math.min(d[i], d[i+1], d[i+2]);
+      if (mx - mn > maxChroma) maxChroma = mx - mn;
+      const lum255 = d[i] * 0.299 + d[i+1] * 0.587 + d[i+2] * 0.114;
+      if (lum255 > paperLum) paperLum = lum255;
+      if (lum255 < darkestLum) darkestLum = lum255;
+      const lum = lum255 / 255;
+      const a = 1 - lum;
+      A[y * c.width + x] = a;
+      if (a > 0.03) { sum += a; sx += x * a; sy += y * a; n0++;
+        if (x<minX)minX=x; if(x>maxX)maxX=x; if(y<minY)minY=y; if(y>maxY)maxY=y; }
+    }
+    const cx = sx / sum, cy = sy / sum;
+    // principal axis via weighted covariance
+    let vxx=0,vyy=0,vxy=0;
+    for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) {
+      const a = A[y * c.width + x]; if (a <= 0.03) continue;
+      const dx = x - cx, dy = y - cy;
+      vxx += a*dx*dx; vyy += a*dy*dy; vxy += a*dx*dy;
+    }
+    vxx/=sum; vyy/=sum; vxy/=sum;
+    const theta = 0.5 * Math.atan2(2*vxy, vxx - vyy);
+    // extents along / across the principal axis
+    let alo=1e9,ahi=-1e9,clo=1e9,chi=-1e9;
+    const cs=Math.cos(-theta), sn=Math.sin(-theta);
+    for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) {
+      const a = A[y * c.width + x]; if (a <= 0.03) continue;
+      const dx = x - cx, dy = y - cy;
+      const u = dx*cs - dy*sn, v = dx*sn + dy*cs;
+      if(u<alo)alo=u; if(u>ahi)ahi=u; if(v<clo)clo=v; if(v>chi)chi=v;
+    }
+    rows.push({n, chroma:maxChroma, paper:Math.round(paperLum), ink:Math.round(darkestLum),
+      inkMass:+(sum/(c.width*c.height)*100).toFixed(2),
+      angleDeg:+(theta*180/Math.PI).toFixed(1),
+      along:+(ahi-alo).toFixed(0), across:+(chi-clo).toFixed(0),
+      aspect:+((ahi-alo)/(chi-clo)).toFixed(2)});
+  }
+  log('n  paper ink  chroma  ink%   angle°  along across aspect');
+  for (const r of rows) log(
+    `${r.n}  ${String(r.paper).padEnd(5)} ${String(r.ink).padEnd(4)} ${String(r.chroma).padEnd(6)}  ${String(r.inkMass).padEnd(5)}  ${String(r.angleDeg).padEnd(6)}  ${String(r.along).padEnd(5)} ${String(r.across).padEnd(5)}  ${r.aspect}`);
+ }
+})();
+</script>

@@ -161,6 +161,22 @@ const BRUSH_PRESETS = {
     // Pencil and Brush pulled it's the only broad-mark tool left. `icon` is
     // explicit because Basics has no family glyph.
     ink_nib:      { family: 'Basics', free: true, icon: '/graphics/Exquisite-corpse-tool-icons-10-QUILL.svg', label: 'Chisel Nib', nib: true, nibAngle: -0.7, wet: false, sizeRange: [3, 34], size: 11, pressureSize: 0.5 },
+    // First brush built from real scans. Spacing is WIDE because each stamp is
+    // already a stretch of dragged stroke, not a contact patch — stamping these
+    // densely smears the streaking that is the whole point of them. Follow is
+    // high for the same reason: the mark carries its own drag direction, and a
+    // fixed hold would lay the streaks across the line instead of along it.
+    // Dry brush, second set. These impressions are near-round, so spinning each
+    // dab costs almost no width but decorrelates the lace — which is the whole
+    // problem with a broken tip: repetition is invisible on a solid stamp and
+    // reads as a caterpillar on a lacy one. Hence the near-free full rotation
+    // rather than the small angle wobble the elongated sets use.
+    dry_brush:    { retired: true, family: 'Watercolor', label: 'Dry Brush',    stamps: 'dry_brush', spacing: 0.16, wet: false, stampAlpha: 0.5, sizeRange: [6, 70], size: 26, pressureSize: 0.75, scatter: 0.04, angle: 'follow', stampAngle: 0, stampFollow: 0.15, angleJitter: 3.14, sizeJitter: 0.10, offsetJitter: 0.06 },
+    // Brush pen. These impressions ARE contact patches, so unlike the dry brush
+    // they stamp densely and hold a mostly-fixed angle: the thick/thin is the
+    // tip staying put while the stroke direction turns under it, the same
+    // geometry as the Chisel Nib.
+    brush_pen:    { retired: true, family: 'Basics', label: 'Brush Pen',        stamps: 'brush_pen', spacing: 0.14, wet: false, stampAlpha: 0.9, sizeRange: [4, 60], size: 18, pressureSize: 0.8, scatter: 0.01, angle: 'follow', stampAngle: -0.7, stampFollow: 0.2, angleJitter: 0.07, sizeJitter: 0.06, offsetJitter: 0.03 },
     wc_wash:      { retired: true, family: 'Watercolor', label: 'Wet Wash',     tip: 'wetDisc',     spacing: 0.18, opacity: 0.38, wet: true,  rim: 2.2, rimWidth: 4,  sizeRange: [8, 80],  size: 30, pressureSize: 0.75, scatter: 0.05, angle: 'none' },
     wc_bleed:     { retired: true, family: 'Watercolor', label: 'Soft Bleed',   tip: 'softDisc',    spacing: 0.16, opacity: 0.30, wet: true,  rim: 0.8, rimWidth: 10, sizeRange: [10, 90], size: 42, pressureSize: 0.7, scatter: 0.08, angle: 'none' },
     wc_dry:       { retired: true, family: 'Watercolor', label: 'Dry Brush',    rake: true, grains: 46, tooth: 0.75, grit: 0.42, gritScale: 0.13, stampAlpha: 0.62, wet: false, sizeRange: [6, 60],  size: 22, pressureSize: 0.8 },
@@ -369,11 +385,198 @@ function jitterColor(hex, amt, variant) {
     return `hsl(${h2.toFixed(1)}, ${(sat * 100).toFixed(1)}%, ${(l2 * 100).toFixed(1)}%)`;
 }
 
-function tipSprite(tip, color, w, colorJitter) {
+// ---- Image stamp tips (scanned impressions) ----
+// The one place the engine fetches an asset at runtime. Everything else here
+// is procedural on purpose, so this path is deliberately narrow: a preset opts
+// in with `stamps: '<setName>'`, and the set is a handful of PNGs of the SAME
+// tip pressed and lifted — the contact patch, not a stroke. Dense spacing means
+// the silhouette is never seen as such; what reads is the edge quality.
+//
+// These are our own scans, which also keeps us clear of the tip-PNG licensing
+// question in BRUSH_ENGINE_PLAN.md — nothing third-party enters the repo.
+const STAMP_SETS = {
+    // First real set (2026-07-22): one loaded brush dragged repeatedly until it
+    // ran out. ORDERED — 01 is the last, driest mark — so it's used as a
+    // depletion run, not a shuffle. Only 01-03 are loaded: 04 and 05 are the
+    // heavily-loaded sampling marks, and that's not the ink level this brush is
+    // for. It also keeps the across-axis in a 27-41px band instead of 27-91,
+    // which is what made the dry-out step rather than fade.
+    // Superseded by dry-brush-02 (the first set was dragged marks, which the
+    // engine then swept a second time — see BRUSH_ENGINE_PLAN.md). Kept only
+    // so the old sheets can be re-rendered for comparison.
+    dry_brush_v1: { dir: '/graphics/stamps/dry-brush', prefix: 'dry-brush-', count: 3, slice: 0.24 },
+    // Second dry-brush set (2026-07-22): 10 press-and-lift impressions, lacy
+    // and broken, near-round (aspect 0.8-1.5). Unordered — ink coverage isn't
+    // monotonic across the files — so these cycle as variants rather than
+    // running as a depletion sequence.
+    dry_brush: { dir: '/graphics/stamps/dry-brush-02', prefix: 'dry-brush-02-', count: 10 },
+    // Brush pen: stays loaded, so every mark is dense and full. Unordered —
+    // these are interchangeable impressions, and the thick/thin comes from the
+    // tip's angle against the stroke, not from running out of ink.
+    brush_pen: { dir: '/graphics/stamps/brush-pen', prefix: 'brush-pen-', count: 5 },
+};
+const stampMasks = new Map();  // setName -> [canvas] once decoded
+const stampLoads = new Map();  // setName -> Promise, so concurrent asks share
+
+// Alpha comes from DARKNESS for a scan on white paper, or straight from the
+// alpha channel if the PNG was cut out. Sniffing which avoids a flag the
+// person making the stamps would have to remember to set correctly.
+function maskFromImage(img) {
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const d = ctx.getImageData(0, 0, c.width, c.height);
+    const p = d.data;
+    let transparent = false;
+    for (let i = 3; i < p.length; i += 4) { if (p[i] < 250) { transparent = true; break; } }
+    if (!transparent) {
+        for (let i = 0; i < p.length; i += 4) {
+            // Rec. 601 luma; white paper -> 0 alpha, full black -> opaque.
+            const lum = (p[i] * 0.299 + p[i + 1] * 0.587 + p[i + 2] * 0.114) / 255;
+            p[i + 3] = Math.round((1 - lum) * 255);
+        }
+    }
+    // The mask carries shape in ALPHA only, like buildTipMask's output, so
+    // tipSprite's source-in tint works on it unchanged.
+    for (let i = 0; i < p.length; i += 4) { p[i] = p[i + 1] = p[i + 2] = 255; }
+    ctx.putImageData(d, 0, 0);
+    return c;
+}
+
+// Alpha-weighted principal axis of the inked pixels. Scans arrive at whatever
+// angle the mark happened to be made at (the first real set came in between 36
+// and 49 degrees), and requiring a consistent hand-alignment would be a rule to
+// get wrong for no reason. Measure it and straighten it instead.
+function principalAngle(mask) {
+    const w = mask.width, h = mask.height;
+    const d = mask.getContext('2d').getImageData(0, 0, w, h).data;
+    let sum = 0, sx = 0, sy = 0;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const a = d[(y * w + x) * 4 + 3] / 255;
+        if (a > 0.03) { sum += a; sx += x * a; sy += y * a; }
+    }
+    if (!sum) return 0;
+    const cx = sx / sum, cy = sy / sum;
+    let vxx = 0, vyy = 0, vxy = 0;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const a = d[(y * w + x) * 4 + 3] / 255;
+        if (a <= 0.03) continue;
+        const dx = x - cx, dy = y - cy;
+        vxx += a * dx * dx; vyy += a * dy * dy; vxy += a * dx * dy;
+    }
+    return 0.5 * Math.atan2(2 * vxy / sum, (vxx - vyy) / sum);
+}
+
+// Rotate the mark's long axis to horizontal, which is what the rest of the
+// pipeline assumes (aspect, and the angle the stamp is drawn at).
+function straightenMask(mask) {
+    const theta = principalAngle(mask);
+    if (Math.abs(theta) < 0.01) return mask;
+    const diag = Math.ceil(Math.hypot(mask.width, mask.height));
+    const c = document.createElement('canvas');
+    c.width = c.height = diag;
+    const ctx = c.getContext('2d');
+    ctx.translate(diag / 2, diag / 2);
+    ctx.rotate(-theta);
+    ctx.drawImage(mask, -mask.width / 2, -mask.height / 2);
+    return c;
+}
+
+// Crop to the inked bounding box and record the impression's proportions.
+// Stroke thickness is the tip's extent ACROSS travel, so that short axis is
+// what the size slider has to mean — otherwise how tightly a scan happened to
+// be framed would silently rescale the brush (measured: a 26px setting drew an
+// 8px line, because the lens filled only 27% of the square across).
+function cropMask(mask) {
+    const w = mask.width, h = mask.height;
+    const d = mask.getContext('2d').getImageData(0, 0, w, h).data;
+    let minX = w, maxX = -1, minY = h, maxY = -1;
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            if (d[(y * w + x) * 4 + 3] > 8) {
+                if (x < minX) minX = x; if (x > maxX) maxX = x;
+                if (y < minY) minY = y; if (y > maxY) maxY = y;
+            }
+        }
+    }
+    if (maxX < 0) return null; // blank scan
+    const bw = maxX - minX + 1, bh = maxY - minY + 1;
+    const c = document.createElement('canvas');
+    c.width = bw; c.height = bh;
+    c.getContext('2d').drawImage(mask, minX, minY, bw, bh, 0, 0, bw, bh);
+    return { canvas: c, across: bh, along: bw };
+}
+
+function loadStampSet(name) {
+    if (stampMasks.has(name)) return Promise.resolve(stampMasks.get(name));
+    if (stampLoads.has(name)) return stampLoads.get(name);
+    const set = STAMP_SETS[name];
+    if (!set) return Promise.reject(new Error(`unknown stamp set ${name}`));
+    const load = Promise.all(
+        Array.from({ length: set.count }, (_, i) => new Promise((res, rej) => {
+            const img = new Image();
+            img.onload = () => res(straightenMask(maskFromImage(img)));
+            img.onerror = () => rej(new Error(`stamp ${name}/${i + 1} failed`));
+            img.src = `${set.dir}/${set.prefix || ''}${String(i + 1).padStart(2, '0')}.png`;
+        }))
+    ).then(raw => {
+        // A DRAGGED scan records a contact patch already moved along a path.
+        // Stamping it whole makes the engine sweep an already-swept mark: the
+        // texture is right, but the mark is longer than a tight curve's radius
+        // and juts out of the stroke as darts. `slice` cuts a cross-section out
+        // of the middle instead — the bristle pattern ACROSS the tip, which is
+        // the actual contact patch. Sweeping a gappy cross-section is what
+        // produces lengthwise streaks on real paper, so the dry-brush character
+        // comes back out of the mechanism rather than being baked in.
+        // Crop FIRST: the slice has to be a fraction of the MARK, not of the
+        // canvas it floats in, or it barely narrows anything.
+        let cropped = raw.map(cropMask).filter(Boolean);
+        if (set.slice) cropped = cropped.map(m => {
+            const keep = Math.max(2, Math.round(m.canvas.width * set.slice));
+            // Where along the drag to cut. The middle of a stroke is its most
+            // solid part, so slicing there returned a clean but characterless
+            // tip — all the break-up lives toward the tail, where the ink was
+            // giving out. `sliceAt` 0..1 runs start..end of the drag.
+            const at = set.sliceAt ?? 0.5;
+            const x0 = Math.round((m.canvas.width - keep) * Math.min(1, Math.max(0, at)));
+            const c = document.createElement('canvas');
+            c.width = keep; c.height = m.canvas.height;
+            c.getContext('2d').drawImage(m.canvas, x0, 0, keep, m.canvas.height,
+                0, 0, keep, m.canvas.height);
+            return cropMask(c);
+        }).filter(Boolean);
+        if (!cropped.length) throw new Error(`stamp set ${name} is blank`);
+        // Normalise the SET by one shared factor, not each impression to a
+        // uniform size: one press runs fatter than the next, and flattening
+        // that would throw away the very inconsistency these scans are for.
+        const meanAcross = cropped.reduce((s, m) => s + m.across, 0) / cropped.length;
+        const masks = cropped.map(m => ({
+            canvas: m.canvas,
+            aspect: m.along / m.across,  // long axis relative to stroke width
+            scale: m.across / meanAcross, // this press's own heft, preserved
+        }));
+        stampMasks.set(name, masks);
+        return masks;
+    });
+    stampLoads.set(name, load);
+    return load;
+}
+
+// Stamping is synchronous per dab, so a set must be resident BEFORE a stroke
+// starts. Callers (tool selection, and remote replay before it feeds ops)
+// await this; a preset whose set isn't loaded simply doesn't draw rather than
+// falling back to a procedural tip that would look like a different brush.
+function stampsReady(presetId) {
+    const set = BRUSH_PRESETS[presetId]?.stamps;
+    return set ? stampMasks.has(set) : true;
+}
+
+function tipSprite(tip, color, w, colorJitter, variantOverride) {
     // Bucketed sprite size: sprites are drawn at the bucket size and
     // drawImage-scaled to the exact stamp width, keeping the cache small.
     const bucket = Math.max(8, Math.pow(2, Math.ceil(Math.log2(w))));
-    const variant = Math.floor(Math.random() * TIP_VARIANTS);
+    const variant = variantOverride ?? Math.floor(Math.random() * TIP_VARIANTS);
     const key = `${tip}|${color}|${bucket}|${variant}|${colorJitter || 0}`;
     let sprite = tipCache.get(key);
     if (!sprite) {
@@ -387,6 +590,47 @@ function tipSprite(tip, color, w, colorJitter) {
         tipCache.set(key, sprite);
     }
     return sprite;
+}
+
+// Tinted, bucketed sprite for one impression of an image stamp set — the
+// tipSprite path, but with the mask coming from a scan instead of buildTipMask.
+// Tinted sprite for one impression at a bucketed height. The caller decides
+// the draw size, so a depletion run can stretch between two impressions'
+// proportions without needing a sprite per intermediate size.
+function stampSprite(setName, idx, color, dh) {
+    const masks = stampMasks.get(setName);
+    if (!masks || !masks.length) return null;
+    const mask = masks[idx % masks.length];
+    const bucketH = Math.max(8, Math.pow(2, Math.ceil(Math.log2(Math.max(1, dh)))));
+    const bucketW = Math.max(1, Math.round(bucketH * mask.aspect));
+    const key = `stamp:${setName}|${idx % masks.length}|${color}|${bucketH}`;
+    let sprite = tipCache.get(key);
+    if (!sprite) {
+        if (tipCache.size > 64) tipCache.clear();
+        const c = document.createElement('canvas');
+        c.width = bucketW; c.height = bucketH;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(mask.canvas, 0, 0, bucketW, bucketH);
+        ctx.globalCompositeOperation = 'source-in';
+        ctx.fillStyle = color;
+        ctx.fillRect(0, 0, bucketW, bucketH);
+        sprite = c;
+        tipCache.set(key, sprite);
+    }
+    return sprite;
+}
+
+// Per-dab wobble for image stamps, keyed off DISTANCE ALONG THE STROKE rather
+// than Math.random(). Two reasons, and the second is the load-bearing one:
+// remote peers replaying the same op get identical marks (today's stamp
+// randomness is an accepted divergence), and the planned 300 DPI export can
+// re-render an op log without the drawing changing under the user. That export
+// is blocked on replacing ~59 Math.random() calls; there's no reason to add to
+// the pile when a hash of state.dist does the same job. Same reason paperTooth
+// and rakeNoise are position-keyed.
+function stampHash(x) {
+    const s = Math.sin(x * 127.1) * 43758.5453;
+    return s - Math.floor(s);
 }
 
 // ============================================================================
@@ -913,7 +1157,88 @@ function stampAlongSegment(ctx, presetId, color, from, to, fromW, toW, state) {
             state.dir += delta * 0.3; // smoothed so texture doesn't twitch
         }
     }
-    const stampAt = (x, y, w) => {
+    const stampAt = (x, y, w, at) => {
+        // Image-stamp presets: pick the impression and its wobble from distance
+        // along the stroke, so the mark is reproducible (see stampHash).
+        if (preset.stamps) {
+            const h1 = stampHash(at), h2 = stampHash(at + 7.77), h3 = stampHash(at + 19.3);
+            const masks = stampMasks.get(preset.stamps);
+            if (!masks || !masks.length) return; // not resident; see stampsReady
+            // Advance the impression roughly once per tip-width travelled, not
+            // per dab: at spacing 0.16 a new scan every dab would churn six
+            // impressions inside one tip width and read as noise.
+            // Two ways to choose the impression. A `deplete` set is an ORDERED
+            // run of one brush emptying out — file 01 is the driest, the last
+            // is fully loaded — so it's indexed by distance travelled: the
+            // stroke starts loaded and runs dry over `deplete` px, exactly the
+            // way the real brush does. Sets without it are interchangeable
+            // impressions and just cycle, advancing about once per tip width
+            // (per dab would churn several inside one width and read as noise).
+            let idx, scale, aspect;
+            if (preset.deplete) {
+                const t = Math.min(1, at / preset.deplete);
+                const f = (1 - t) * (masks.length - 1);
+                const i0 = Math.max(0, Math.floor(f));
+                const i1 = Math.min(masks.length - 1, i0 + 1);
+                const fr = f - i0;
+                idx = Math.round(f);
+                // The impressions differ a lot in heft, so switching outright
+                // stepped the line width visibly partway along the stroke.
+                // Snapping the TEXTURE but interpolating the PROPORTIONS gets a
+                // smooth dry-out for one stamp per dab: a texture swap is far
+                // harder to see than a width jump.
+                scale = masks[i0].scale + (masks[i1].scale - masks[i0].scale) * fr;
+                aspect = masks[i0].aspect + (masks[i1].aspect - masks[i0].aspect) * fr;
+            } else {
+                idx = Math.floor(at / Math.max(1, w)) % masks.length;
+                scale = masks[idx].scale;
+                aspect = masks[idx].aspect;
+            }
+            // Normalise on the extent the tip PROJECTS across the stroke at its
+            // nominal hold, not on its narrow axis: held at 40deg a 3:1 tip
+            // spans ~2.8x its width, so sizing by the narrow axis made a 26px
+            // setting draw an 86px line (measured). Sizing on the projection
+            // makes `size` mean stroke width again, and the mark still thins
+            // and thickens around it as the direction turns under the tip.
+            const a0 = preset.stampAngle ?? 0;
+            const proj = aspect * Math.abs(Math.sin(a0)) + Math.abs(Math.cos(a0));
+            const across = w / Math.max(0.2, proj) * (1 + (h1 - 0.5) * 2 * (preset.sizeJitter ?? 0));
+            const dh = Math.max(1, across * scale);
+            const dw = Math.max(1, dh * aspect);
+            const sprite = stampSprite(preset.stamps, idx, color, dh);
+            if (!sprite) return;
+            const off = (h2 - 0.5) * 2 * (preset.offsetJitter ?? 0) * w;
+            // A brush held in the hand doesn't swivel to follow the line —
+            // that's WHY the mark goes thick and thin: the tip stays put while
+            // the direction changes under it (same reason the Chisel Nib fixes
+            // nibAngle in page space). Following fully gives a constant-width
+            // sausage. `stampFollow` is how much of the travel direction leaks
+            // in; a little keeps corners from looking pasted on.
+            const follow = preset.stampFollow ?? 0;
+            const rot = (preset.stampAngle ?? 0)
+                + follow * (state.dir ?? 0)
+                + (h3 - 0.5) * 2 * (preset.angleJitter ?? 0);
+            ctx.globalCompositeOperation = 'source-over';
+            // Optional paper tooth, sampled per dab in CANVAS coordinates so it
+            // stays registered to the paper rather than sliding with the brush.
+            // CAVEAT, measured 2026-07-22: this only reads as texture when dabs
+            // DON'T heavily overlap. On the dry brush (4px spacing under a 26px
+            // tip, so ~6 dabs per pixel) the per-dab values averaged out and it
+            // acted as a uniform dimmer — coverage moved under 3% while mean
+            // alpha fell from 150 to 114. Texture finer than a dab has to be
+            // knocked out of the finished stroke, the way compositeWetStroke
+            // does granulation, not modulated per dab.
+            let alpha = preset.stampAlpha ?? 1;
+            if (preset.tooth) alpha *= 1 - preset.tooth * (1 - paperTooth(x, y));
+            ctx.globalAlpha = alpha;
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(rot);
+            ctx.drawImage(sprite, -dw / 2, -dh / 2 + off, dw, dh);
+            ctx.restore();
+            ctx.globalAlpha = 1;
+            return;
+        }
         const sprite = tipSprite(preset.tip, color, w, preset.colorJitter);
         ctx.globalCompositeOperation = 'source-over';
         // Dry media (charcoal/pastel) stamp translucently and build up
@@ -932,12 +1257,26 @@ function stampAlongSegment(ctx, presetId, color, from, to, fromW, toW, state) {
         ctx.globalAlpha = 1;
     };
 
+    // state.dist was already advanced past this segment above, so the distance
+    // at the segment's START is what indexes each dab's wobble.
+    const base = (state.dist || 0) - dist;
     if (dist < 0.02) { // the "dot on tap" stamp at stroke start
-        stampAt(from.x, from.y, Math.max(1, fromW));
+        stampAt(from.x, from.y, Math.max(1, fromW), base);
         state.residual = 0;
         return;
     }
-    const step = Math.max(1, preset.spacing * Math.max((fromW + toW) / 2, 2));
+    // `spacing` is a fraction of the tip's WIDTH, which is the right unit for a
+    // contact patch. For a dragged mark it isn't: these run 5-6x longer than
+    // they are wide, so a 0.55 width-spacing laid them down every tenth of
+    // their own length — ~10x overlap, which is what grew the barbed comb
+    // artifacts where strokes crossed. `spaceAlong` reads spacing as a fraction
+    // of the mark's LENGTH instead.
+    let spaceScale = 1;
+    if (preset.stamps && preset.spaceAlong) {
+        const sm = stampMasks.get(preset.stamps);
+        if (sm && sm.length) spaceScale = sm.reduce((s, m) => s + m.aspect, 0) / sm.length;
+    }
+    const step = Math.max(1, preset.spacing * spaceScale * Math.max((fromW + toW) / 2, 2));
     // Clamp: if the width (and so the step) shrank since the residual was
     // banked, an oversized residual would otherwise walk pos backwards.
     let sinceLast = Math.min(state.residual, step); // distance travelled since the last stamp, carried across segments
@@ -948,10 +1287,15 @@ function stampAlongSegment(ctx, presetId, color, from, to, fromW, toW, state) {
         const t = pos / dist;
         const w = Math.max(1, fromW + (toW - fromW) * t);
         const jitter = preset.scatter * w;
+        // Image stamps take their scatter from the same distance-keyed hash as
+        // the rest of their wobble, so the whole dab is reproducible.
+        const sx = preset.stamps ? (stampHash(base + pos + 3.1) - 0.5) * 2 : (Math.random() - 0.5) * 2;
+        const sy = preset.stamps ? (stampHash(base + pos + 11.7) - 0.5) * 2 : (Math.random() - 0.5) * 2;
         stampAt(
-            from.x + dx * t + (Math.random() - 0.5) * 2 * jitter,
-            from.y + dy * t + (Math.random() - 0.5) * 2 * jitter,
-            w
+            from.x + dx * t + sx * jitter,
+            from.y + dy * t + sy * jitter,
+            w,
+            base + pos
         );
     }
     state.residual = sinceLast + (dist - pos);

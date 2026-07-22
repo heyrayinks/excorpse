@@ -1,0 +1,50 @@
+<meta charset="utf-8">
+<title>Image-stamp brushes</title>
+<style>body{font:13px ui-monospace,monospace;background:#222;color:#ddd;padding:16px}
+canvas{background:#fff;display:block;margin:8px 0 18px}</style>
+<h1>Image-stamp brushes</h1>
+<pre id="log"></pre>
+<div id="sheets"></div>
+<script src="/brush-engine.js"></script>
+<script>
+const log = m => document.getElementById('log').textContent += m + '\n';
+
+// Same battery for every brush: ① constant width ② pressure taper
+// ③ S-curve (shows angle behaviour) ④ dense scribble (periodic-texture check)
+// ⑤ writing scale.
+function renderSheet(presetId, ctx) {
+  const path = (fn, n = 220) => Array.from({ length: n }, (_, i) => fn(i / (n - 1)));
+  const stroke = (pts, widthAt) => {
+    const state = {};
+    // Pointer-DOWN first, as the app does: that branch seeds state.residual.
+    stampAlongSegment(ctx, presetId, '#1a1a1a', pts[0], pts[0], widthAt(0), widthAt(0), state);
+    for (let i = 1; i < pts.length; i++)
+      stampAlongSegment(ctx, presetId, '#1a1a1a', pts[i - 1], pts[i],
+        widthAt((i - 1) / (pts.length - 1)), widthAt(i / (pts.length - 1)), state);
+  };
+  const base = BRUSH_PRESETS[presetId].size;
+  stroke(path(t => ({ x: 60 + t * 780, y: 70 })), () => base);
+  stroke(path(t => ({ x: 60 + t * 780, y: 160 })), t => base * (0.25 + 1.15 * Math.sin(Math.PI * t)));
+  stroke(path(t => ({ x: 60 + t * 780, y: 280 + Math.sin(t * Math.PI * 2) * 70 })), () => base);
+  stroke(path(t => ({ x: 120 + t * 300 + Math.sin(t * 40) * 60, y: 430 + Math.cos(t * 27) * 45 }), 600), () => base * 0.8);
+  stroke(path(t => ({ x: 520 + t * 300, y: 430 + Math.sin(t * Math.PI * 3) * 30 })), () => base * 0.3);
+}
+
+(async () => {
+  for (const id of ['dry_brush', 'brush_pen']) {
+    const set = BRUSH_PRESETS[id].stamps;
+    try { await loadStampSet(set); } catch (e) { log(id + ' LOAD FAILED: ' + e.message); continue; }
+    const masks = stampMasks.get(set);
+    log(`${id}: ${masks.length} impressions, aspect ` +
+        masks.map(m => m.aspect.toFixed(2)).join('/') +
+        ', scale ' + masks.map(m => m.scale.toFixed(2)).join('/'));
+    const c = document.createElement('canvas');
+    c.width = 900; c.height = 520;
+    document.getElementById('sheets').appendChild(c);
+    renderSheet(id, c.getContext('2d'));
+    const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+    const res = await fetch(`/__save?name=sheet-${id}.png`, { method: 'POST', body: blob });
+    log(`  saved sheet-${id}.png -> ${res.status}`);
+  }
+})();
+</script>

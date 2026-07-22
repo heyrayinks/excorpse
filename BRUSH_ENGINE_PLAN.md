@@ -98,6 +98,76 @@ Everything else below is still in `index.html`.
   `stamp` op type (whitelisted in `server.js` ws handler). **No server
   changes are needed for new preset brushes.**
 
+## Image-stamp brushes (added 2026-07-22)
+
+The one place the engine fetches an asset at runtime. A preset opts in with
+`stamps: '<set>'`; the set is a folder of PNGs of a real tip, photographed and
+levelled in Photoshop (paper reads a true 255, ink a true 0 — no scanner
+needed, and no auto-levelling in the loader). Ray's own scans, so the
+third-party tip-PNG licensing question below doesn't arise.
+
+**The primitive is a CONTACT PATCH, not a stroke.** At the spacings used here
+the silhouette is never seen as such; what reads is the edge quality. The first
+set supplied was *dragged* marks (aspect up to 6.5) and the engine then swept an
+already-swept mark: the stamp was longer than a tight curve's radius and jutted
+out of the stroke as darts. `slice`/`sliceAt` exist to cut a cross-section out
+of such a scan, but the real fix was press-and-lift samples.
+
+Loader (`loadStampSet`), in order: decode → alpha from darkness (or the alpha
+channel if the PNG is cut out, sniffed) → `straightenMask()` rotates the mark's
+principal axis to horizontal (scans arrived between 28° and 88°, so orientation
+is detected, never required of the person making them) → `cropMask()` to the
+inked bbox → optional `slice` → normalise.
+
+**Normalisation is per SET, not per impression** — one shared factor from the
+set's mean across-axis, so one press running fatter than the next survives.
+Flattening each to a uniform size destroys the very inconsistency the scans are
+for. Size then means the tip's extent PROJECTED across the stroke at its nominal
+hold, not its narrow axis: held at 40°, a 3:1 tip spans ~2.8× its width, and
+sizing on the narrow axis made a 26px setting draw an 86px line (measured).
+
+Preset knobs: `stampAngle` (nominal hold) + `stampFollow` (0..1, how much travel
+direction leaks in) + `angleJitter`; `sizeJitter`, `offsetJitter`; `deplete`
+(ordered set indexed by distance travelled, proportions interpolated between
+adjacent impressions so width fades instead of stepping); `spaceAlong` (read
+`spacing` as a fraction of the mark's length rather than its width); `tooth`.
+
+**All per-dab wobble is keyed off distance along the stroke via `stampHash()`,
+never `Math.random()`** — so remote peers replaying an op see the same mark, and
+the planned 300 DPI export can re-render without the texture re-rolling. Net-new
+random calls in this path: zero. Keep it that way.
+
+### What has been tried, and what it cost
+
+- **Fixed angle vs follow depends on the tip.** A brush in the hand doesn't
+  swivel to follow the line — that's *why* the mark goes thick and thin, same
+  geometry as the Chisel Nib. Full follow gives a constant-width sausage. But
+  that only holds for an elongated tip: `dry_brush`'s impressions are near-round
+  (aspect 0.8–1.5), and there `stampFollow: 1` merely presented their short axis
+  and narrowed the mark.
+- **Free rotation is the anti-repetition tool for round tips.** Rotating each
+  dab (`angleJitter: 3.14`) costs almost no width when aspect ≈ 1 and
+  decorrelates the lace. Repetition is invisible on a SOLID stamp and reads as a
+  caterpillar on a lacy one — so **a sparse tip needs many more impressions than
+  a dense one** (10 for dry_brush vs 5 for brush_pen).
+- **Per-dab `paperTooth` gating does NOT work under heavy overlap.** Measured:
+  coverage moved under 3% while mean alpha fell 150→114 — a uniform dimmer, not
+  texture. At 4px spacing under a 26px tip every pixel gets ~6 dabs, so per-dab
+  values average out. **Texture finer than a dab has to be knocked out of the
+  finished stroke** the way `compositeWetStroke` does granulation. The `tooth`
+  param remains for sparse-spacing presets; it is unset on dry_brush.
+
+### Harnesses
+
+`dev/stamp-analyse.html` measures a set (paper/ink levels, chroma, ink mass,
+principal angle, along/across, aspect) — run it on any new folder before wiring
+it up. `dev/stamp-test.html` renders each image-stamp preset through the same
+six-stroke battery as the main swatch sheet and writes `dev/out/sheet-<id>.png`.
+Both are served by `node dev/swatch-server.js`.
+
+**Neither brush has been drawn WITH yet** — quality-bar items 3/4/5 below are
+outstanding for both. Swatches are necessary, not sufficient.
+
 ## The quality bar for shipping a brush
 
 Set by Ray, 2026-07-21, after a full set was tested on iPad and most of it
