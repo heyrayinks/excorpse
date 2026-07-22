@@ -1460,8 +1460,11 @@
                     <span id="sizeLabel" class="text-xs text-gray-500 w-5">${sizeCfg.value}</span>
                 </div>
                 <div class="h-6 border-l border-gray-300"></div>
-                <button id="undoBtn" class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold rounded-lg">↶ Undo</button>
-                <button id="redoBtn" class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold rounded-lg disabled:opacity-40 disabled:cursor-default" disabled title="Redo (Ctrl/Cmd+Shift+Z)">↷ Redo</button>
+                <!-- Arrows only: the toolbar wraps on anything narrower than an
+                     iPad Pro, and the draw screen is overflow:hidden, so every
+                     wrapped row comes straight out of canvas height. -->
+                <button id="undoBtn" class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 text-base font-semibold rounded-lg" title="Undo (Ctrl/Cmd+Z)" aria-label="Undo">↶</button>
+                <button id="redoBtn" class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 text-base font-semibold rounded-lg disabled:opacity-40 disabled:cursor-default" disabled title="Redo (Ctrl/Cmd+Shift+Z)" aria-label="Redo">↷</button>
                 <button id="clearBtn" class="px-3 py-1.5 bg-orange-100 hover:bg-orange-200 text-orange-700 text-sm font-semibold rounded-lg">Clear</button>
                 <div id="roundStatus" class="ml-auto flex gap-2"></div>
             </div>
@@ -2821,7 +2824,7 @@
                 </div>
                 <div class="h-6 border-l border-gray-300"></div>
                 <div class="flex items-center gap-1.5">
-                    <button id="ocUndoBtn" class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold rounded-lg" title="Undo your last mark">↶ Undo</button>
+                    <button id="ocUndoBtn" class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 text-base font-semibold rounded-lg" title="Undo your last mark" aria-label="Undo">↶</button>
                     ${g.you && g.you.order === 1 ? `
                     <button id="ocClearBtn" class="px-3 py-1.5 bg-orange-100 hover:bg-orange-200 text-orange-700 text-sm font-semibold rounded-lg" title="Clear the whole canvas (everyone's work)">Clear</button>` : ''}
                 </div>
