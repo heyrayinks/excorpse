@@ -171,12 +171,12 @@ const BRUSH_PRESETS = {
     // problem with a broken tip: repetition is invisible on a solid stamp and
     // reads as a caterpillar on a lacy one. Hence the near-free full rotation
     // rather than the small angle wobble the elongated sets use.
-    dry_brush:    { retired: true, family: 'Watercolor', label: 'Dry Brush',    stamps: 'dry_brush', spacing: 0.16, wet: false, stampAlpha: 0.5, sizeRange: [6, 70], size: 26, pressureSize: 0.75, scatter: 0.04, angle: 'follow', stampAngle: 0, stampFollow: 0.15, angleJitter: 3.14, sizeJitter: 0.10, offsetJitter: 0.06 },
+    dry_brush:    { beta: true, family: 'Ink', label: 'Dry Brush', icon: '/graphics/Exquisite-corpse-tool-icons-03-BRUSH.svg', stamps: 'dry_brush', spacing: 0.16, wet: false, stampAlpha: 0.5, sizeRange: [6, 70], size: 26, pressureSize: 0.75, scatter: 0.04, angle: 'follow', stampAngle: 0, stampFollow: 0.15, angleJitter: 3.14, sizeJitter: 0.10, offsetJitter: 0.06 },
     // Brush pen. These impressions ARE contact patches, so unlike the dry brush
     // they stamp densely and hold a mostly-fixed angle: the thick/thin is the
     // tip staying put while the stroke direction turns under it, the same
     // geometry as the Chisel Nib.
-    brush_pen:    { retired: true, family: 'Basics', label: 'Brush Pen',        stamps: 'brush_pen', spacing: 0.14, wet: false, stampAlpha: 0.9, sizeRange: [4, 60], size: 18, pressureSize: 0.8, scatter: 0.01, angle: 'follow', stampAngle: -0.7, stampFollow: 0.2, angleJitter: 0.07, sizeJitter: 0.06, offsetJitter: 0.03 },
+    brush_pen:    { beta: true, family: 'Ink', label: 'Brush Pen',              stamps: 'brush_pen', spacing: 0.14, wet: false, stampAlpha: 0.9, sizeRange: [4, 60], size: 18, pressureSize: 0.8, scatter: 0.01, angle: 'follow', stampAngle: -0.7, stampFollow: 0.2, angleJitter: 0.07, sizeJitter: 0.06, offsetJitter: 0.03 },
     wc_wash:      { retired: true, family: 'Watercolor', label: 'Wet Wash',     tip: 'wetDisc',     spacing: 0.18, opacity: 0.38, wet: true,  rim: 2.2, rimWidth: 4,  sizeRange: [8, 80],  size: 30, pressureSize: 0.75, scatter: 0.05, angle: 'none' },
     wc_bleed:     { retired: true, family: 'Watercolor', label: 'Soft Bleed',   tip: 'softDisc',    spacing: 0.16, opacity: 0.30, wet: true,  rim: 0.8, rimWidth: 10, sizeRange: [10, 90], size: 42, pressureSize: 0.7, scatter: 0.08, angle: 'none' },
     wc_dry:       { retired: true, family: 'Watercolor', label: 'Dry Brush',    rake: true, grains: 46, tooth: 0.75, grit: 0.42, gritScale: 0.13, stampAlpha: 0.62, wet: false, sizeRange: [6, 60],  size: 22, pressureSize: 0.8 },
@@ -570,6 +570,22 @@ function loadStampSet(name) {
 function stampsReady(presetId) {
     const set = BRUSH_PRESETS[presetId]?.stamps;
     return set ? stampMasks.has(set) : true;
+}
+
+// Call before a stamp preset can be drawn with. No-op for every other tool.
+function ensureStampsFor(presetId) {
+    const set = BRUSH_PRESETS[presetId]?.stamps;
+    return set ? loadStampSet(set) : Promise.resolve();
+}
+
+// Open Canvas needs ALL of them resident, not just the ones this user can
+// pick: a subscriber peer can draw with a brush a free viewer can't see, and
+// their stroke still has to render on that viewer's canvas. Round modes don't
+// need this — each artist draws their own section alone — so they load lazily
+// on tool selection instead.
+function preloadAllStampSets() {
+    return Promise.all(Object.keys(STAMP_SETS).map(n =>
+        loadStampSet(n).catch(e => { console.warn('stamp set failed:', n, e); return null; })));
 }
 
 function tipSprite(tip, color, w, colorJitter, variantOverride) {

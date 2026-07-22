@@ -2084,6 +2084,11 @@
 
         function selectTool(tool) {
             S.tool = tool;
+            // Image-stamp brushes fetch their impressions at runtime, and
+            // stamping is synchronous per dab — an unloaded set draws nothing
+            // at all rather than degrading. Kick the load on selection so it's
+            // resident well before the first mark.
+            ensureStampsFor(tool);
             toolTriggerIcon.src = TOOL_META[tool].icon;
             toolTriggerLabel.textContent = TOOL_META[tool].label;
             document.querySelectorAll('.toolMenuItem').forEach(btn => {
@@ -2277,6 +2282,7 @@
             subscriberOnly: !p.free,
             family: p.family,
             retired: !!p.retired,
+            beta: !!p.beta,
         };
     }
 
@@ -2312,6 +2318,7 @@
                 <button data-tool="${tool}" class="toolMenuItem w-full text-left px-3 py-2 text-sm font-semibold hover:bg-gray-100 flex items-center gap-2 ${tool === S.tool ? 'bg-gray-100' : ''}">
                     <img src="${meta.icon}" alt="" class="w-12 h-12 object-contain">
                     <span>${meta.label}</span>
+                    ${meta.beta ? `<span class="ml-auto text-[9px] font-bold tracking-wider text-amber-600 bg-amber-50 border border-amber-200 rounded px-1 py-0.5">BETA</span>` : ''}
                 </button>
             `).join('')}
         `).join('');
@@ -2846,7 +2853,17 @@
 
         setupOpenCanvasDrawing();
         updateCanvasPlayerList(g);
-        connectCanvasSocket();
+        // Stamp impressions must be resident BEFORE the socket opens: the
+        // server replies with the full stroke history on connect, stamping is
+        // synchronous per dab, and a preset whose set hasn't loaded draws
+        // nothing at all — so an early history would silently lose every
+        // image-stamp stroke on the canvas. Every set, not just the ones this
+        // user can pick: a subscriber peer's brush has to render for a free
+        // viewer too. Connect regardless if it fails, rather than stranding
+        // the canvas offline over a missing PNG.
+        preloadAllStampSets().finally(() => {
+            if (S.screen === 'canvas') connectCanvasSocket();
+        });
 
         document.getElementById('ocShareBtn').addEventListener('click', () => showShareGameModal(g.code, {
             isCreator: g.you && g.you.order === 1,
@@ -3287,6 +3304,11 @@
 
         function selectTool(tool) {
             S.tool = tool;
+            // Image-stamp brushes fetch their impressions at runtime, and
+            // stamping is synchronous per dab — an unloaded set draws nothing
+            // at all rather than degrading. Kick the load on selection so it's
+            // resident well before the first mark.
+            ensureStampsFor(tool);
             toolTriggerIcon.src = TOOL_META[tool].icon;
             toolTriggerLabel.textContent = TOOL_META[tool].label;
             document.querySelectorAll('.toolMenuItem').forEach(btn => {
