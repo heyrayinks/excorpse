@@ -113,6 +113,7 @@
         presetSizes: {},       // per-preset size overrides for the stamp-engine brushes (defaults live in BRUSH_PRESETS)
         activeLayer: 1,        // 1 = line art (top, default), 0 = background/fill (bottom)
         undoStacks: [],  // per-layer dataURL snapshots, sized to LAYER_COUNT on canvas setup  // per-layer dataURL snapshots (compressed, memory-friendly)
+        redoStacks: [],  // undone snapshots, same shape; cleared by any new mark
         submittedThisRound: false,
         lastRound: null,
         inspWord: null,        // this round's inspiration word
@@ -1460,6 +1461,7 @@
                 </div>
                 <div class="h-6 border-l border-gray-300"></div>
                 <button id="undoBtn" class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold rounded-lg">↶ Undo</button>
+                <button id="redoBtn" class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold rounded-lg disabled:opacity-40 disabled:cursor-default" disabled title="Redo (Ctrl/Cmd+Shift+Z)">↷ Redo</button>
                 <button id="clearBtn" class="px-3 py-1.5 bg-orange-100 hover:bg-orange-200 text-orange-700 text-sm font-semibold rounded-lg">Clear</button>
                 <div id="roundStatus" class="ml-auto flex gap-2"></div>
             </div>
@@ -1534,6 +1536,7 @@
         const ctxs = canvases.map(c => c.getContext('2d', { willReadFrequently: true }));
         ctxs.forEach(ctx => { ctx.lineCap = 'round'; ctx.lineJoin = 'round'; });
         S.undoStacks = emptyUndoStacks();
+        S.redoStacks = emptyUndoStacks();
 
         const topCanvas = canvases[TOP_LAYER]; // always receives pointer events, regardless of active layer
 
@@ -1919,6 +1922,15 @@
             const layer = S.activeLayer;
             S.undoStacks[layer].push(canvases[layer].toDataURL('image/png'));
             if (S.undoStacks[layer].length > 20) S.undoStacks[layer].shift();
+            // A fresh mark makes the redo branch unreachable — keeping it would
+            // let Redo paste back work that was drawn over.
+            S.redoStacks[layer] = [];
+            updateUndoRedoButtons();
+        }
+
+        function updateUndoRedoButtons() {
+            const redoBtn = document.getElementById('redoBtn');
+            if (redoBtn) redoBtn.disabled = !S.redoStacks[S.activeLayer]?.length;
         }
 
         topCanvas.addEventListener('pointerdown', e => {
@@ -2112,6 +2124,9 @@
                 document.querySelectorAll('.layerBtn').forEach(b => {
                     b.classList.toggle('active', b === btn);
                 });
+                // Undo/redo stacks are per-layer, so the button's enabled state
+                // belongs to the layer just switched to, not the previous one.
+                updateUndoRedoButtons();
             });
         });
 
@@ -2143,11 +2158,16 @@
             document.getElementById('sizeLabel').textContent = val;
         });
 
-        function performUndo() {
+        // Restore a snapshot onto a layer, banking the CURRENT pixels onto the
+        // opposite stack first. Undo and Redo are the same move in opposite
+        // directions, so they share this rather than duplicating the load.
+        function restoreSnapshot(from, to) {
             const layer = S.activeLayer;
-            const snap = S.undoStacks[layer].pop();
+            const snap = from[layer].pop();
             if (!snap) return;
             const ctx = ctxs[layer];
+            to[layer].push(canvases[layer].toDataURL('image/png'));
+            if (to[layer].length > 20) to[layer].shift();
             const img = new Image();
             img.onload = () => {
                 ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
@@ -2155,20 +2175,25 @@
                 ctx.drawImage(img, 0, 0);
             };
             img.src = snap;
+            updateUndoRedoButtons();
         }
+        function performUndo() { restoreSnapshot(S.undoStacks, S.redoStacks); }
+        function performRedo() { restoreSnapshot(S.redoStacks, S.undoStacks); }
         document.getElementById('undoBtn').addEventListener('click', performUndo);
+        document.getElementById('redoBtn').addEventListener('click', performRedo);
 
-        // Ctrl+Z (Windows/Linux) or Cmd+Z (Mac) — not the Shift variant (redo),
-        // since there's no redo stack to pair it with. Plain assignment (not
-        // addEventListener) so re-running setupCanvas each round replaces the
-        // old handler instead of stacking a new one, same as document.onclick
-        // below; the screen check keeps it inert once the user navigates away.
+        // Ctrl+Z undoes; Ctrl+Shift+Z redoes (and Ctrl+Y, which is what Windows
+        // users reach for). Plain assignment (not addEventListener) so re-running
+        // setupCanvas each round replaces the old handler instead of stacking a
+        // new one, same as document.onclick below; the screen check keeps it
+        // inert once the user navigates away.
         document.onkeydown = e => {
             if (S.screen !== 'draw') return;
-            if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
-                e.preventDefault();
-                performUndo();
-            }
+            const mod = e.ctrlKey || e.metaKey;
+            if (!mod) return;
+            const k = e.key.toLowerCase();
+            if (k === 'z' && !e.shiftKey) { e.preventDefault(); performUndo(); }
+            else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); performRedo(); }
         };
         document.getElementById('clearBtn').addEventListener('click', () => {
             pushUndo();
