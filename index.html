@@ -145,8 +145,16 @@
     // part of the permanent free set now.
     const TOOL_META = {
         pen: { icon: '/graphics/Exquisite-corpse-tool-icons-04-PEN.svg', label: 'Pen' },
-        pencil: { icon: '/graphics/Exquisite-corpse-tool-icons-02-PENCIL.svg', label: 'Pencil' },
-        brush: { icon: '/graphics/Exquisite-corpse-tool-icons-03-BRUSH.svg', label: 'Brush' },
+        // `retired` hides a tool from the picker WITHOUT removing its renderer.
+        // Both still have to draw: Open Canvas replays a persisted op log, and
+        // any game (or favorite) made before they were pulled would otherwise
+        // come back missing strokes. Nothing new can be drawn with them.
+        //
+        // Pencil and Brush were pulled 2026-07-21 — after several passes they
+        // still didn't hold up next to Pen / Chisel Nib / Airbrush, and the
+        // plan is to restart them from scratch rather than keep tuning.
+        pencil: { icon: '/graphics/Exquisite-corpse-tool-icons-02-PENCIL.svg', label: 'Pencil', retired: true },
+        brush: { icon: '/graphics/Exquisite-corpse-tool-icons-03-BRUSH.svg', label: 'Brush', retired: true },
         airbrush: { icon: '/graphics/Exquisite-corpse-tool-icons-07-AIRBRUSH.svg', label: 'Airbrush' },
         // Splat/Splatter moved out of Ink into Effects: they're one-shot marks
         // rather than drawing tools, and grouping them with the nib misled
@@ -2231,8 +2239,16 @@
     };
     // Presets register into TOOL_META so everything that resolves a tool's
     // icon/label (trigger button, selectTool, menu) keeps working unchanged.
+    // `free: true` on a preset puts it in the permanent free set instead of
+    // behind the subscription, and `icon` overrides the family glyph (needed
+    // for anything filed under Basics, which has no family icon).
     for (const [id, p] of Object.entries(BRUSH_PRESETS)) {
-        TOOL_META[id] = { icon: FAMILY_ICONS[p.family], label: p.label, subscriberOnly: true, family: p.family };
+        TOOL_META[id] = {
+            icon: p.icon || FAMILY_ICONS[p.family],
+            label: p.label,
+            subscriberOnly: !p.free,
+            family: p.family,
+        };
     }
 
     // ---- Grouped tool menu ----
@@ -2251,7 +2267,9 @@
     }
     function toolMenuHtml() {
         const canSub = S.authToken && S.user && S.user.subscribed;
-        const visible = Object.entries(TOOL_META).filter(([, meta]) => !meta.subscriberOnly || canSub);
+        const visible = Object.entries(TOOL_META)
+            .filter(([, meta]) => !meta.retired)
+            .filter(([, meta]) => !meta.subscriberOnly || canSub);
         const families = new Map();
         for (const [tool, meta] of visible) {
             const fam = meta.family || 'Basics';

@@ -154,7 +154,11 @@ const BRUSH_PRESETS = {
     // broad-nib hold), so direction changes modulate the line the way they do
     // on paper. Replaced the old Wet Quill, whose speed-driven width plus ink
     // pooling read as blobby rather than as a pen.
-    ink_nib:      { family: 'Ink', label: 'Chisel Nib', nib: true, nibAngle: -0.7, wet: false, sizeRange: [3, 34], size: 11, pressureSize: 0.5 },
+    // Filed under Basics and free (2026-07-21): it earned its place in the
+    // permanent free set alongside Pen / Eraser / Fill / Airbrush, and with
+    // Pencil and Brush pulled it's the only broad-mark tool left. `icon` is
+    // explicit because Basics has no family glyph.
+    ink_nib:      { family: 'Basics', free: true, icon: '/graphics/Exquisite-corpse-tool-icons-10-QUILL.svg', label: 'Chisel Nib', nib: true, nibAngle: -0.7, wet: false, sizeRange: [3, 34], size: 11, pressureSize: 0.5 },
     wc_wash:      { family: 'Watercolor', label: 'Wet Wash',     tip: 'wetDisc',     spacing: 0.18, opacity: 0.38, wet: true,  rim: 2.2, rimWidth: 4,  sizeRange: [8, 80],  size: 30, pressureSize: 0.75, scatter: 0.05, angle: 'none' },
     wc_bleed:     { family: 'Watercolor', label: 'Soft Bleed',   tip: 'softDisc',    spacing: 0.16, opacity: 0.30, wet: true,  rim: 0.8, rimWidth: 10, sizeRange: [10, 90], size: 42, pressureSize: 0.7, scatter: 0.08, angle: 'none' },
     wc_dry:       { family: 'Watercolor', label: 'Dry Brush',    rake: true, grains: 46, tooth: 0.75, grit: 0.42, gritScale: 0.13, stampAlpha: 0.62, wet: false, sizeRange: [6, 60],  size: 22, pressureSize: 0.8 },
