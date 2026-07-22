@@ -1,10 +1,15 @@
 # Brush Engine — architecture notes & recipe for future brush drops
 
-Status as of 2026-07-19: **SHIPPED** — the parametric stamp engine plus 15
-subscriber brushes across four families (Ink 3, Watercolor 4, Charcoal 4,
-Pastel 4) are live. This doc is the map for adding more brushes (the whole
-point of the $2.99/mo subscription: new brushes as they release) and for the
-bigger lifts that were deliberately deferred.
+Status as of 2026-07-21: **most of the set has been pulled.** Shipping now is
+Pen, Chisel Nib, Airbrush, Eraser and Fill — the tools that passed review —
+all free. Pencil, Brush, and the whole Watercolor / Charcoal / Pastel /
+Effects subscriber set are `retired: true`: hidden from the picker, renderers
+kept so op-log replay and existing favorites don't lose strokes. They are to
+be **rebuilt from scratch, not tuned further**.
+
+The brush sets get developed BEFORE the Stripe subscription is set up — there
+is no point selling access to something that isn't ready. Read the quality bar
+below before adding anything; this doc is no longer a recipe for volume.
 
 ## Swatch harness (added 2026-07-21) — look before you tune
 
@@ -41,8 +46,11 @@ Everything else below is still in `index.html`.
   composite alpha), `stampAlpha` (per-stamp alpha for dry media), `wet`
   (buffer + multiply composite on lift), `sizeRange`/`size`, `pressureSize`,
   `scatter`, `angle` (`'none' | 'follow'`), `colorJitter` (per-variant HSL
-  nudge). **A new brush that reuses an existing tip is ONE new row + nothing
-  else** — menu, sizes, slider, gating, and Open Canvas sync all derive.
+  nudge). A brush reusing an existing tip needs only a row — menu, sizes,
+  slider, gating and Open Canvas sync all derive from it. **Treat that as a
+  convenience for wiring, NOT as a way to ship brushes.** Adding a row is the
+  last five minutes of a brush's development, not the whole of it; see the
+  quality bar below.
 - **`buildTipMask(tip, s)`** — procedural tip shapes (alpha masks): `wetDisc`,
   `softDisc`, `granDisc`, `toothCoarse`, `toothSoft`, `toothFine`,
   `flatStick` (long-axis vertical → `angle:'follow'` drags it perpendicular),
@@ -90,24 +98,63 @@ Everything else below is still in `index.html`.
   `stamp` op type (whitelisted in `server.js` ws handler). **No server
   changes are needed for new preset brushes.**
 
-## Recipe: shipping a new brush (the monthly-drop workflow)
+## The quality bar for shipping a brush
 
-1. Add a `BRUSH_PRESETS` row (new tip case in `buildTipMask` only if no
-   existing texture fits). `subscriberOnly` gating is automatic.
-2. If it's a new family: add to `TOOL_FAMILY_ORDER` + `FAMILY_ICONS` + a
-   234-viewBox `#888`/`#d7d7d7` SVG in `graphics/`.
-3. Verify with the established browser-pane recipe (screenshots are
-   unreliable in the automated pane — use pixel sampling):
-   patch `requestAnimationFrame`→setTimeout, patch
-   `PointerEvent.prototype.getCoalescedEvents` to `return [this]`, dispatch
-   with `pointerId: 1`; beta-signup (`betaCode` env) grants `subscribed`.
-   Draw → `getImageData` alpha counts; wet brushes → crossing strokes,
-   assert intersection alpha > single-stroke alpha; Open Canvas → draw,
-   reload, assert history replay repaints (proves server round-trip).
-   Delete test accounts via `DELETE /api/account/me` when done.
-4. Update the Brush Subscription card copy (count/families) on the account
-   page. Commit per family, push (Railway auto-deploys; in-progress games
-   now survive graceful deploys via the SIGTERM snapshot in `server.js`).
+Set by Ray, 2026-07-21, after a full set was tested on iPad and most of it
+pulled: **"each one demands care — no more quick thrown together brushes.
+Users will subscribe for quality, not quantity."** The subscription is not a
+volume promise. One brush that an illustrator reaches for beats a family of
+eight that get tried once.
+
+History worth knowing: 15 brushes shipped in a day as preset rows, and within
+two weeks all but the Chisel Nib had been pulled. Cheap to add turned out to
+mean cheap to look at.
+
+A brush is ready when all of these are true. Not before.
+
+1. **It has a physical model.** The brushes that survived review are the ones
+   whose behaviour falls out of a mechanism: the Chisel Nib is a fixed-angle
+   edge swept along the path, so thick/thin is geometry, not a formula. The
+   ones that failed were a stroke plus corrective texture, tuned by parameter.
+   If it needs a fudge factor to look right, the mechanism is wrong — go back
+   rather than add another term.
+2. **It has been compared against real media.** Not from memory. Get a scan or
+   a photograph of the actual tool making slow marks, loops and quick marks,
+   and put the render beside it. Every real defect this session was found by
+   looking; none by reasoning about code.
+3. **It has been drawn WITH, not just swatched.** Writing text with a brush is
+   a far harsher test than a swatch stroke, and is what exposed the rake
+   collapsing at small sizes and the sub-step rungs. Ask Ray for a real
+   drawing before calling one done.
+4. **It works at every resolution the app uses,** not just the one the harness
+   renders at (see the 300 DPI blockiness bug — invisible at 1x).
+5. **It holds up at every size in its `sizeRange`,** at writing scale and at
+   full width.
+6. **It shows no periodic texture.** The recurring failure is overlapping
+   translucent strokes double-compositing, and those overlaps lining up into
+   grids, ribs or rungs. Check a dense scribbled patch, not just a line.
+
+### Wiring, once the brush itself is good
+
+- Add the `BRUSH_PRESETS` row (`retired: true` keeps a shelved brush's
+  renderer alive for op-log replay without showing it in the picker; `free`
+  puts it in the permanent free set; `icon` overrides the family glyph).
+- New family: add to `TOOL_FAMILY_ORDER` + `FAMILY_ICONS` + a 234-viewBox
+  `#888`/`#d7d7d7` SVG in `graphics/`.
+- Verify in-app with the browser-pane recipe: patch
+  `requestAnimationFrame`→setTimeout, patch
+  `PointerEvent.prototype.getCoalescedEvents` to `return [this]`, dispatch
+  with `pointerId: 1`; beta-signup (`betaCode` env) grants `subscribed`.
+  Draw → `getImageData` sampling; wet brushes → crossing strokes, assert the
+  intersection is darker than a single stroke; Open Canvas → draw, reload,
+  assert history replay repaints. Delete test accounts via
+  `DELETE /api/account/me` when done.
+- Update the Brush Subscription card copy on the account page, then commit and
+  push (Railway auto-deploys; in-progress games survive graceful deploys via
+  the SIGTERM snapshot in `server.js`).
+
+**Sequencing:** the brush sets get built before the Stripe subscription is set
+up — there's no point selling access to something that isn't ready.
 
 ## Planned: 300 DPI export (record → simulate → render on demand)
 

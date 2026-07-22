@@ -128,9 +128,11 @@ function inkStampQuillBlob(ctx, color, size, x, y) {
 // One data-driven engine for the Watercolor / Charcoal / Pastel families:
 // every brush is a row in BRUSH_PRESETS (tip texture, spacing, opacity,
 // pressure dynamics), rendered by stampAlongSegment() walking the stroke
-// and stamping cached tinted tip sprites. New brushes are new rows, not
-// new code — which is what a "new brushes as they release" subscription
-// needs. Tips are procedural (no assets fetched at runtime); parameter
+// and stamping cached tinted tip sprites. A brush reusing an existing tip
+// needs only a row — but that's a wiring convenience, NOT a way to ship
+// brushes: 15 were added this way in a day and all but one were pulled
+// within a fortnight. See the quality bar in BRUSH_ENGINE_PLAN.md before
+// adding another. Tips are procedural (no assets fetched at runtime); parameter
 // feel is tuned by eye against Krita/MyPaint's CC0/public-domain preset
 // packs, but all code here is original — Krita's own engines are GPL C++
 // and were never copied.
