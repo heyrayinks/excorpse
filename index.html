@@ -1686,8 +1686,13 @@
                 const taper = 1 - i / (tail.length - 1);
                 return Math.max(0.3, pt.width * (0.08 + taper * 0.92));
             });
+            // Redraw through the SAME renderer the body used. Redrawing the
+            // tail as a plain solid line put it back at full pt.width while the
+            // body beside it had been thinned by speed — a visible bulge right
+            // where the taper began, worst on quick (thin) strokes because
+            // that's where the thinning is largest.
             for (let i = 1; i < tail.length; i++) {
-                strokeTaperedSegment(ctx, tail[i - 1], tail[i], taperedWidths[i - 1], taperedWidths[i]);
+                basicBrushSegment(ctx, S.brushColor, tail[i - 1], tail[i], taperedWidths[i - 1], taperedWidths[i]);
             }
 
             brushStroke = [];
@@ -2361,8 +2366,10 @@
             const taper = 1 - i / (tail.length - 1);
             return Math.max(0.3, pt.width * (0.08 + taper * 0.92));
         });
+        // Same renderer as the body — see finishBrushTaper for why a plain
+        // solid redraw left a bulge at the start of the taper.
         for (let i = 1; i < tail.length; i++) {
-            ocStrokeTaperedSegment(ctx, tail[i - 1], tail[i], taperedWidths[i - 1], taperedWidths[i]);
+            basicBrushSegment(ctx, color, tail[i - 1], tail[i], taperedWidths[i - 1], taperedWidths[i]);
         }
     }
 

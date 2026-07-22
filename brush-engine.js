@@ -536,36 +536,36 @@ function basicBrushSegment(ctx, color, from, to, fromWidth, toWidth) {
 function basicPencilSegment(ctx, color, from, to, width) {
     const speed = strokeSpeed(Math.hypot(to.x - from.x, to.y - from.y));
     const r = Math.max(0.6, width) / 2;
-    const lanes = Math.min(26, Math.max(3, Math.round(r * 2.4)));
 
+    // No lanes. Overlapping translucent lanes double-composite where they
+    // overlap, and at a pencil's width those overlaps line up into fine
+    // parallel ribs running down the mark. A pencil line is only a few px
+    // across anyway, so there's no cross-stroke structure worth resolving —
+    // the texture people actually read is density varying ALONG the line.
+    //
+    // Two passes: a soft wide halo giving the ragged edge, and a narrower core
+    // for the body, both shaded by paper tooth so a second pass over the same
+    // patch darkens the same grain. BUTT caps so consecutive pieces abut
+    // instead of overlapping (round caps double-composite into beads).
     ctx.save();
     ctx.strokeStyle = color;
-    ctx.lineCap = 'round';
-    ctx.lineWidth = Math.max(0.45, (r * 2) / lanes * 1.5);
-    walkSegment(from, to, 2.5 * PAPER_SCALE, (ax, ay, bx, by) => {
-        const dxs = bx - ax, dys = by - ay;
-        const dl = Math.hypot(dxs, dys) || 0.01;
-        const nx = -dys / dl, ny = dxs / dl;
-        for (let i = 0; i < lanes; i++) {
-            // Jitter each lane sideways. Perfectly parallel lanes plus regular
-            // sub-steps weave into a visible comb/grid; a position-keyed nudge
-            // (still paper-locked, so repeat passes agree) breaks that up into
-            // something that reads as grain.
-            const base = ((i + 0.5) / lanes - 0.5) * 2 * r;
-            const jit = (paperValueNoise((ax + i * 13) / 6, (ay + i * 13) / 6) - 0.5) * (r / lanes) * 2.4;
-            const off = base + jit;
-            const lx = ax + nx * off, ly = ay + ny * off;
-            const ex = bx + nx * off, ey = by + ny * off;
-            const tooth = paperTooth((lx + ex) / 2, (ly + ey) / 2);
-            if (tooth < 0.2) continue;                   // a genuine hollow
-            const edge = 1 - Math.abs(off) / (r + 0.001);
-            if (edge <= 0) continue;
-            ctx.globalAlpha = Math.min(0.5, (0.12 + tooth * 0.38) * (0.4 + edge * 0.6) * (1 - 0.35 * speed));
+    ctx.lineCap = 'butt';
+    // Sub-step well under the paper's ~4px tooth features. At 2px the two
+    // beat against each other and shading passes came out looking like
+    // brickwork; sampling several times per feature gives a gradient.
+    walkSegment(from, to, 1.1 * PAPER_SCALE, (ax, ay, bx, by) => {
+        const grit = 0.55 + paperTooth((ax + bx) / 2, (ay + by) / 2) * 0.75;
+        const fade = 1 - 0.3 * speed;
+        const pass = (widthMul, alpha) => {
+            ctx.lineWidth = Math.max(0.4, r * 2 * widthMul);
+            ctx.globalAlpha = Math.max(0, Math.min(0.6, alpha));
             ctx.beginPath();
-            ctx.moveTo(lx, ly);
-            ctx.lineTo(ex, ey);
+            ctx.moveTo(ax, ay);
+            ctx.lineTo(bx, by);
             ctx.stroke();
-        }
+        };
+        pass(1.0, 0.10 * grit * fade);    // soft halo — the ragged edge
+        pass(0.55, 0.22 * grit * fade);   // core
     });
     ctx.restore();
 }
