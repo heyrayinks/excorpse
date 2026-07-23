@@ -1142,8 +1142,14 @@ function nibAlongSegment(ctx, presetId, color, from, to, fromW, toW, state) {
 // nothing on the wire. Taper-OUT would need lift lookahead the dry engines
 // don't have — see BRUSH_ENGINE_PLAN.md.
 function taperFactor(state, w) {
-    const len = Math.max(5, w * 1.6);
-    return Math.min(1, 0.3 + 0.7 * ((state.dist || 0) / len));
+    // Entry taper: geometric assist so the OPENING mark comes to a point even
+    // when the landing pressure isn't especially light. Starts near a point
+    // (0.08) and fills over ~1.8 tip widths. (The closing mark's point comes
+    // from light lift pressure via presetWidthFor — see BRUSH_ENGINE_PLAN.md;
+    // an always-on geometric taper-OUT would need lift lookahead this doesn't
+    // have.)
+    const len = Math.max(6, w * 1.8);
+    return Math.min(1, 0.08 + 0.92 * ((state.dist || 0) / len));
 }
 
 // ---- The one shared stroke primitive ----
@@ -1479,9 +1485,16 @@ function presetWidthFor(preset, baseSize, e) {
     const p = (e && e.pressure > 0) ? e.pressure : lastPresetPressure;
     lastPresetPressure = p;
     const amt = preset.pressureSize ?? 0.6;
-    // Wider swing than the old 0.4–1.6 so weight actually shows: about 0.35× the
-    // base at a feather touch up to ~1.8× at full press, matching the Brush
-    // tool's range. amt scales how much of that swing the preset opts into.
-    const factor = (1 - amt) + amt * (0.3 + p * 1.7);
-    return Math.max(1, baseSize * factor);
+    // A brush comes to a POINT when you land or lift it lightly — that's the
+    // move this shapes for. The old curve had a hard floor ((1-amt) ≈ 0.2 for
+    // brush_pen) that kept even a zero-pressure touch at ~0.44× base: a medium
+    // line, never a point. This drops the floor to a near-point (0.06) and
+    // shapes the rise with pow(p, 0.7) so a light touch collapses fast toward
+    // the point while normal drawing pressure (~0.5) still sits near full width,
+    // preserving the mid-stroke weight. `amt` widens only the heavy-press end.
+    const shaped = Math.pow(Math.min(1, p), 0.85);
+    const factor = 0.06 + (0.95 + amt) * shaped;
+    // Low clamp so the point can actually render thin (was 1px, which blunted
+    // it); render scale keeps this ≥ ~1 device px at real sizes.
+    return Math.max(0.4, baseSize * factor);
 }
