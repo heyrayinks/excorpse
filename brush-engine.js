@@ -166,12 +166,15 @@ const BRUSH_PRESETS = {
     // densely smears the streaking that is the whole point of them. Follow is
     // high for the same reason: the mark carries its own drag direction, and a
     // fixed hold would lay the streaks across the line instead of along it.
-    // Dry brush, second set. These impressions are near-round, so spinning each
-    // dab costs almost no width but decorrelates the lace — which is the whole
-    // problem with a broken tip: repetition is invisible on a solid stamp and
-    // reads as a caterpillar on a lacy one. Hence the near-free full rotation
-    // rather than the small angle wobble the elongated sets use.
-    dry_brush:    { beta: true, family: 'Ink', label: 'Dry Brush', icon: '/graphics/Exquisite-corpse-tool-icons-03-BRUSH.svg', stamps: 'dry_brush', spacing: 0.16, wet: false, stampAlpha: 0.5, sizeRange: [6, 70], size: 26, pressureSize: 0.75, scatter: 0.04, angle: 'follow', stampAngle: 0, stampFollow: 0.15, angleJitter: 3.14, sizeJitter: 0.10, offsetJitter: 0.06 },
+    // Branded "Ink Bleed" (Ray, 2026-07-22). These impressions are near-round,
+    // so spinning each dab freely decorrelates the lace but builds a MOTTLED,
+    // soft-edged field with no lengthwise grain — which reads as a wet ink
+    // bleed, not a streaky dry brush. Rather than fight that, it's named for
+    // what it does; the "Dry Brush" name is kept free for a future streaky
+    // (elongated, gappy) sample set. INTERNAL ID stays `dry_brush` on purpose:
+    // the wire protocol and op-log replay key off it, so renaming the key would
+    // break replay of strokes already drawn with it — only the label changed.
+    dry_brush:    { beta: true, family: 'Ink', label: 'Ink Bleed', icon: '/graphics/Exquisite-corpse-tool-icons-03-BRUSH.svg', stamps: 'dry_brush', spacing: 0.16, wet: false, stampAlpha: 0.5, sizeRange: [6, 70], size: 26, pressureSize: 0.75, scatter: 0.04, angle: 'follow', stampAngle: 0, stampFollow: 0.15, angleJitter: 3.14, sizeJitter: 0.10, offsetJitter: 0.06 },
     // Brush pen. These impressions ARE contact patches, so unlike the dry brush
     // they stamp densely and hold a mostly-fixed angle: the thick/thin is the
     // tip staying put while the stroke direction turns under it, the same
