@@ -1984,6 +1984,7 @@
             } else if (BRUSH_PRESETS[S.tool]) {
                 const preset = BRUSH_PRESETS[S.tool];
                 presetState = { residual: 0, dir: undefined };
+                resetPresetPressure(e);
                 if (preset.wet) { ensureWetLayers(); wetActive = true; }
                 const w = presetWidthFor(preset, presetBaseSize(preset), e);
                 stampAlongSegment(preset.wet ? wetBufferCtx : ctxs[S.activeLayer], S.tool, S.brushColor, p, p, w, w, presetState);
@@ -3172,6 +3173,7 @@
             } else if (BRUSH_PRESETS[S.tool]) {
                 const preset = BRUSH_PRESETS[S.tool];
                 presetState = { residual: 0, dir: undefined };
+                resetPresetPressure(e);
                 if (preset.wet) {
                     ensureWetLayers();
                     wetActive = true;

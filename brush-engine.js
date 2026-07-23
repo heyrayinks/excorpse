@@ -1461,8 +1461,27 @@ function paperGrainField(w, h) {
 
 // Pressure -> stamp width, per preset dynamics. Mouse/touch sit at a
 // fixed mid pressure like the other tools.
+// Carries the last real pen pressure across a stroke's noisy samples; reseeded
+// per stroke via resetPresetPressure() at pointerdown. Module-level (not
+// per-engine) since presetWidthFor is shared by both drawing engines.
+let lastPresetPressure = 0.5;
+function resetPresetPressure(e) {
+    lastPresetPressure = (e && e.pressure > 0) ? e.pressure : 0.5;
+}
 function presetWidthFor(preset, baseSize, e) {
-    const p = (e.pointerType === 'pen' && e.pressure > 0) ? e.pressure : 0.5;
-    const factor = (1 - preset.pressureSize) + preset.pressureSize * Math.min(1.6, p * 1.6);
+    // Do NOT gate on pointerType. Coalesced Apple Pencil samples sometimes
+    // report an empty pointerType or a spurious 0 pressure mid-stroke; gating on
+    // either pinned the width to a constant 0.5, so the only variation left was
+    // the tip's thick/thin direction geometry — which reads as "responds to
+    // speed, not weight." Carry the last real reading forward instead, exactly
+    // as the Brush tool's widthFor does (that tool is stylus-praised for its
+    // taper precisely because it skips the gate).
+    const p = (e && e.pressure > 0) ? e.pressure : lastPresetPressure;
+    lastPresetPressure = p;
+    const amt = preset.pressureSize ?? 0.6;
+    // Wider swing than the old 0.4–1.6 so weight actually shows: about 0.35× the
+    // base at a feather touch up to ~1.8× at full press, matching the Brush
+    // tool's range. amt scales how much of that swing the preset opts into.
+    const factor = (1 - amt) + amt * (0.3 + p * 1.7);
     return Math.max(1, baseSize * factor);
 }
