@@ -52,12 +52,17 @@
         }
         /* The draw screen is an app surface, not a document. A pen or finger
            that strays off the canvas onto the toolbar would otherwise let iOS
-           start a TEXT SELECTION on the one bit of selectable text up there —
-           the player-name chip — popping the Copy/Look Up/Translate callout
-           mid-drawing. Nothing in this chrome is meant to be selected, so the
-           whole shell opts out; the canvas already did this for itself. Form
-           controls (color, size slider) keep working regardless. */
-        .draw-shell {
+           start a TEXT SELECTION on toolbar text — the player-name chip, or a
+           button label like "Clear" — popping the Copy/Look Up/Translate
+           callout mid-drawing. Nothing in this chrome is meant to be selected.
+           The rule targets every DESCENDANT, not just the shell, on purpose:
+           user-select is inherited, but the UA stylesheet sets its own
+           -webkit-user-select on <button>/<input>, which directly matches and
+           so beats an inherited value — a `.draw-shell button` (e.g. Clear) was
+           still selectable until this reached it directly. No text inputs live
+           on the draw screens, so blanket-disabling selection here is safe;
+           form controls (color, size slider) keep working regardless. */
+        .draw-shell, .draw-shell * {
             -webkit-user-select: none;
             user-select: none;
             -webkit-touch-callout: none;
