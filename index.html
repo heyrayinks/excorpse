@@ -5052,12 +5052,18 @@
                                     <button class="removeFavBtn absolute top-1 right-1 w-6 h-6 bg-red-500 hover:bg-red-600 text-white text-xs rounded-full opacity-0 group-hover:opacity-100 transition" data-fav-id="${fav.id}">✕</button>
                                     <button class="pinFavBtn absolute top-1 left-1 w-6 h-6 rounded-full text-xs transition ${fav.pinnedAt ? 'bg-[#ffec06] text-black opacity-100' : 'bg-black/60 hover:bg-black/80 text-white opacity-0 group-hover:opacity-100'}"
                                         data-fav-id="${fav.id}" title="${fav.pinnedAt ? 'Unpin from background' : 'Pin to background'}">📌</button>
+                                    <!-- Download THIS drawing on its own — no forced combine. Always
+                                         visible (not hover-only like pin/remove) since hover doesn't
+                                         exist on touch and this is a primary action. Sibling of
+                                         .favSelectArea, so it doesn't trigger combine-selection. -->
+                                    <button class="downloadFavBtn absolute bottom-1 left-1 w-6 h-6 rounded-full bg-black/55 hover:bg-black/80 text-white text-xs flex items-center justify-center transition shadow"
+                                        data-fav-id="${fav.id}" title="Download this drawing">⬇</button>
                                     ${renderCommentThread(fav.comments || [], `fav:${fav.id}`, u.id)}
                                 </div>
                             `).join('') : `<p class="col-span-3 text-sm text-gray-400 italic">No favorites saved yet — finish a game and save your favorite creation!</p>`}
                         </div>
                         ${u.favorites.length >= 2 ? `
-                            <p class="text-xs text-gray-500 mt-3 mb-1.5 text-center">Tap up to 3 favorites to combine them onto one printable sheet</p>
+                            <p class="text-xs text-gray-500 mt-3 mb-1.5 text-center">⬇ downloads a single drawing — or tap up to 3 to combine them onto one printable sheet</p>
                             <button id="downloadMultipleFavBtn" class="w-full px-4 py-2.5 bg-gray-100 text-gray-400 font-semibold text-sm rounded-xl border border-gray-200 cursor-not-allowed" disabled>
                                 📥 Download Multiple (<span id="favSelectedCount">0</span>/3 selected)
                             </button>
@@ -5376,6 +5382,30 @@
                     renderAccount();
                 } catch (e) {
                     alert('Could not update pin: ' + e.message);
+                }
+            });
+        });
+
+        // Download a single favorite on its own. Saves fav.image (the full-res
+        // stitched drawing, not the display thumbnail) via the shared
+        // saveImageFile, which already handles the mobile share sheet and the
+        // desktop download fallback. stopPropagation so it never doubles as a
+        // combine-selection tap.
+        document.querySelectorAll('.downloadFavBtn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const fav = (S.user.favorites || []).find(f => f.id === btn.dataset.favId);
+                if (!fav || !fav.image) return;
+                const prev = btn.textContent;
+                btn.textContent = '…';
+                btn.disabled = true;
+                try {
+                    await saveImageFile(fav.image, `exquisite-corpse-${fav.gameCode || 'creation'}-${String(fav.id).slice(0, 6)}.png`);
+                } catch (err) {
+                    alert('Could not download: ' + err.message);
+                } finally {
+                    btn.textContent = prev;
+                    btn.disabled = false;
                 }
             });
         });
