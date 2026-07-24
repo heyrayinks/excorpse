@@ -2842,84 +2842,69 @@
     // Lightweight roster refresh for the canvas screen's player chip row —
     // called on every 2s poll tick, deliberately never touches canvas pixels
     // (those are owned entirely by the WebSocket).
+    // The ambient roster pills double as the moderation entry point — tapping
+    // another artist's name pill opens a small popup (Report for everyone, plus
+    // Kick for the creator). Keeps the top bar uncluttered: no separate button,
+    // no per-row action list. Your own pill is marked "(you)" and inert. The
+    // click handler is delegated onto the #ocPlayerList container once at render
+    // (see renderCanvasMode), so it survives this innerHTML rebuild on each poll.
     function updateCanvasPlayerList(g) {
         const list = document.getElementById('ocPlayerList');
         if (!list) return;
-        list.innerHTML = g.players.map(p => `
-            <span class="text-xs px-2 py-1 rounded-full text-white font-semibold" style="background:${p.cursorColor || '#999'}" title="${escapeHtml(p.name)}">${escapeHtml(p.name.slice(0, 10))}</span>
-        `).join('');
+        const myOrder = g.you && g.you.order;
+        list.innerHTML = g.players.map(p => {
+            const isSelf = p.order === myOrder;
+            const hint = isSelf ? 'This is you' : (myOrder === 1 ? 'Tap to report or remove' : 'Tap to report');
+            return `<button type="button" class="ocPill text-xs px-2 py-1 rounded-full text-white font-semibold ${isSelf ? 'opacity-70 cursor-default' : 'hover:ring-2 hover:ring-gray-400/70'}"
+                style="background:${p.cursorColor || '#999'}"
+                data-order="${p.order}" data-name="${escapeHtml(p.name)}" ${isSelf ? 'data-self="1"' : ''}
+                title="${hint}">${escapeHtml(p.name.slice(0, 10))}${isSelf ? ' (you)' : ''}</button>`;
+        }).join('');
     }
 
-    // Live roster for every player on the shared canvas. Anyone can Report
-    // another artist mid-game (the abuse case the persistent-content reports
-    // don't cover — someone scribbling something offensive live). The creator
-    // additionally gets Kick, which removes the artist AND erases everything
-    // they drew (handled server-side). Works on any screen size, unlike the
-    // ambient chip list (hidden on small screens).
-    function showPlayersModal() {
+    // Popup shown when an artist's name pill is tapped. Report is available to
+    // everyone (the live-abuse case the persistent-content reports don't cover);
+    // the creator additionally gets Kick, which removes the artist AND erases
+    // everything they drew (handled server-side). Tapping your own pill is inert.
+    function showPlayerActionPopup(order, name) {
         const g = S.game;
-        if (!g || !g.you) return;
+        if (!g || !g.you || order === g.you.order) return;
         const isCreator = g.you.order === 1;
-        const myOrder = g.you.order;
+        const isCreatorTarget = order === 1;
         const overlay = document.createElement('div');
         overlay.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4';
-        const renderRows = () => {
-            const others = (S.game.players || []).filter(p => p.order !== myOrder);
-            return others.length
-                ? others.map(p => `
-                    <div class="flex items-center justify-between gap-3 py-2 border-b border-gray-100 last:border-0">
-                        <span class="flex items-center gap-2 min-w-0">
-                            <span class="w-3 h-3 rounded-full shrink-0" style="background:${p.cursorColor || '#999'}"></span>
-                            <span class="font-semibold text-gray-800 truncate">${escapeHtml(p.name)}</span>
-                            ${p.order === 1 ? `<span class="text-[10px] text-gray-400 shrink-0">creator</span>` : ''}
-                        </span>
-                        <span class="flex items-center gap-1.5 shrink-0">
-                            <button data-report="${p.order}" data-name="${escapeHtml(p.name)}" class="ocReportBtn px-2.5 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-semibold rounded-lg" title="Report this artist">🚩</button>
-                            ${isCreator ? `<button data-kick="${p.order}" class="ocKickBtn px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 text-sm font-semibold rounded-lg">Kick</button>` : ''}
-                        </span>
-                    </div>`).join('')
-                : `<p class="text-gray-400 text-sm text-center py-4">No other artists are on the canvas yet.</p>`;
-        };
         overlay.innerHTML = `
-            <div class="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
-                <div class="flex items-center justify-between mb-1">
-                    <p class="text-gray-800 font-bold text-lg">👥 Artists on the canvas</p>
-                    <button class="playersModalClose text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+            <div class="bg-white rounded-2xl p-6 max-w-xs w-full text-center shadow-2xl">
+                <p class="text-gray-800 font-bold text-lg mb-4">${escapeHtml(name)}${isCreatorTarget ? ' <span class="text-xs font-normal text-gray-400">(creator)</span>' : ''}</p>
+                <div class="space-y-2">
+                    <button class="popupReportBtn w-full px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 font-semibold rounded-xl">🚩 Report</button>
+                    ${isCreator ? `<button class="popupKickBtn w-full px-4 py-2.5 bg-red-50 hover:bg-red-100 text-red-700 font-semibold rounded-xl">🚫 Kick &amp; erase</button>` : ''}
+                    <button class="popupCancelBtn w-full px-4 py-2.5 text-gray-500 hover:text-gray-700 font-semibold rounded-xl">Cancel</button>
                 </div>
-                <p class="text-gray-500 text-xs mb-4">${isCreator
-                    ? 'Report flags an artist for review. Kicking removes them and erases everything they\'ve drawn — that can\'t be undone.'
-                    : 'Report flags an artist for review. Only the game creator can remove someone.'}</p>
-                <div id="playersModalRows">${renderRows()}</div>
             </div>`;
         document.body.appendChild(overlay);
         const close = () => overlay.remove();
         overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
-        overlay.querySelector('.playersModalClose').addEventListener('click', close);
-        overlay.querySelector('#playersModalRows').addEventListener('click', async e => {
-            const reportBtn = e.target.closest('.ocReportBtn');
-            if (reportBtn) {
-                showReportModal({
-                    type: 'player',
-                    targetLabel: `${reportBtn.dataset.name} (on canvas ${g.code})`,
-                    context: { targetName: reportBtn.dataset.name, gameCode: g.code, where: 'open canvas' },
-                });
-                return;
-            }
-            const btn = e.target.closest('.ocKickBtn');
-            if (!btn) return;
-            const order = Number(btn.dataset.kick);
-            const target = (S.game.players || []).find(p => p.order === order);
-            if (!target) return;
+        overlay.querySelector('.popupCancelBtn').addEventListener('click', close);
+        overlay.querySelector('.popupReportBtn').addEventListener('click', () => {
+            close();
+            showReportModal({
+                type: 'player',
+                targetLabel: `${name} (on canvas ${g.code})`,
+                context: { targetName: name, gameCode: g.code, where: 'open canvas' },
+            });
+        });
+        const kickBtn = overlay.querySelector('.popupKickBtn');
+        if (kickBtn) kickBtn.addEventListener('click', async () => {
+            close();
             const ok = await showConfirmModal({
-                title: `Remove ${target.name}?`,
-                message: `${target.name} will be removed from the canvas and everything they drew will be erased for everyone. They can't be undone.`,
+                title: `Remove ${name}?`,
+                message: `${name} will be removed from the canvas and everything they drew will be erased for everyone. This can't be undone.`,
                 confirmLabel: 'Kick & erase',
                 cancelLabel: 'Cancel',
                 icon: '🚫',
             });
-            if (!ok) return;
-            ocSend({ type: 'kick', targetOrder: order });
-            close();
+            if (ok) ocSend({ type: 'kick', targetOrder: order });
         });
     }
 
@@ -2957,10 +2942,9 @@
                     <span class="font-bold text-xl text-gray-900">🖌️ Open Canvas</span>
                     <span id="ocConnStatus" class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-400">Connecting…</span>
                     <button id="ocShareBtn" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg">🔗 Share</button>
-                    <button id="ocPlayersBtn" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg" title="See who's on the canvas">👥 Players</button>
                 </div>
                 <div class="flex items-center gap-3">
-                    <div id="ocPlayerList" class="hidden sm:flex items-center gap-1.5 flex-wrap"></div>
+                    <div id="ocPlayerList" class="flex items-center gap-1.5 flex-wrap"></div>
                     ${g.you && g.you.order === 1
                         ? `<button id="finishBtn" class="px-5 py-2 bg-[#ffec06] hover:bg-[#e6d405] text-black font-bold rounded-lg">🏁 Finish</button>`
                         : `<span class="text-xs text-gray-400 italic">Only ${escapeHtml((g.players.find(p => p.order === 1) || {}).name || 'the creator')} can finish this drawing</span>`}
@@ -3051,8 +3035,15 @@
             playerId: S.playerId,
         }));
 
-        const ocPlayersBtn = document.getElementById('ocPlayersBtn'); // all players
-        if (ocPlayersBtn) ocPlayersBtn.addEventListener('click', () => showPlayersModal());
+        // Tapping another artist's name pill opens the Report/Kick popup.
+        // Delegated on the container so it survives updateCanvasPlayerList's
+        // innerHTML rebuild on every poll (own pill is data-self and inert).
+        const ocPlayerListEl = document.getElementById('ocPlayerList');
+        if (ocPlayerListEl) ocPlayerListEl.addEventListener('click', e => {
+            const pill = e.target.closest('.ocPill');
+            if (!pill || pill.dataset.self) return;
+            showPlayerActionPopup(Number(pill.dataset.order), pill.dataset.name);
+        });
 
         // Flash the shared theme suggestion once when everyone first lands on
         // the canvas — same word for every player (picked server-side at
