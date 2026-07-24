@@ -5048,16 +5048,19 @@
                                     <div class="relative rounded-lg overflow-hidden border-2 border-gray-200 cursor-pointer favSelectArea transition" data-fav-id="${fav.id}" title="Tap to select for combining">
                                         <div class="favOrderBadge hidden absolute bottom-1 right-1 z-10 w-6 h-6 rounded-full bg-[#ffec06] text-black text-xs font-bold items-center justify-center shadow-lg">1</div>
                                         <img src="${fav.thumbnail || fav.image}" class="w-full pointer-events-none">
+                                        <!-- Download THIS drawing on its own — no forced combine. INSIDE
+                                             .favSelectArea so "bottom" is the image bottom (not the whole
+                                             tile, which extends past the comments row and made it overlap
+                                             the "comments" text). Always visible, not hover-gated: hover
+                                             doesn't exist on touch and this is a primary action. Its click
+                                             handler stops propagation, so it never doubles as a
+                                             combine-selection tap even though it's within the tap target. -->
+                                        <button class="downloadFavBtn absolute bottom-1 left-1 z-10 w-6 h-6 rounded-full bg-black/55 hover:bg-black/80 text-white text-xs flex items-center justify-center transition shadow"
+                                            data-fav-id="${fav.id}" title="Download this drawing">⬇</button>
                                     </div>
                                     <button class="removeFavBtn absolute top-1 right-1 w-6 h-6 bg-red-500 hover:bg-red-600 text-white text-xs rounded-full opacity-0 group-hover:opacity-100 transition" data-fav-id="${fav.id}">✕</button>
                                     <button class="pinFavBtn absolute top-1 left-1 w-6 h-6 rounded-full text-xs transition ${fav.pinnedAt ? 'bg-[#ffec06] text-black opacity-100' : 'bg-black/60 hover:bg-black/80 text-white opacity-0 group-hover:opacity-100'}"
                                         data-fav-id="${fav.id}" title="${fav.pinnedAt ? 'Unpin from background' : 'Pin to background'}">📌</button>
-                                    <!-- Download THIS drawing on its own — no forced combine. Always
-                                         visible (not hover-only like pin/remove) since hover doesn't
-                                         exist on touch and this is a primary action. Sibling of
-                                         .favSelectArea, so it doesn't trigger combine-selection. -->
-                                    <button class="downloadFavBtn absolute bottom-1 left-1 w-6 h-6 rounded-full bg-black/55 hover:bg-black/80 text-white text-xs flex items-center justify-center transition shadow"
-                                        data-fav-id="${fav.id}" title="Download this drawing">⬇</button>
                                     ${renderCommentThread(fav.comments || [], `fav:${fav.id}`, u.id)}
                                 </div>
                             `).join('') : `<p class="col-span-3 text-sm text-gray-400 italic">No favorites saved yet — finish a game and save your favorite creation!</p>`}
