@@ -519,8 +519,40 @@ function handleApi(req, res, url) {
     if (!ADMIN_SECRET) return json(res, 403, { error: 'Admin endpoint is not enabled' });
     if (req.headers['x-admin-secret'] !== ADMIN_SECRET) return json(res, 403, { error: 'Invalid admin secret' });
 
+    // ?prefix=... — bulk cleanup of test accounts, which tend to share a
+    // recognisable prefix (the exact generated emails are rarely known after
+    // the fact). This is the one destructive bulk operation in the app, so it
+    // is deliberately hard to fire by accident:
+    //   - a minimum length, so a stray short string like "r" can't sweep up
+    //     real accounts whose name happens to start with it
+    //   - PREVIEW BY DEFAULT: it reports what it would remove and deletes
+    //     nothing unless &confirm=true is passed explicitly
+    const prefix = url.searchParams.get('prefix');
+    if (prefix) {
+      if (prefix.length < 4) {
+        return json(res, 400, { error: 'prefix must be at least 4 characters' });
+      }
+      const matches = data.findUsersByPrefix(prefix);
+      if (url.searchParams.get('confirm') !== 'true') {
+        return json(res, 200, {
+          preview: true,
+          wouldDelete: matches.length,
+          users: matches.map(m => ({ username: m.username, email: m.email })),
+          hint: 'nothing deleted — re-run with &confirm=true to remove these',
+        });
+      }
+      return (async () => {
+        const deleted = [];
+        for (const m of matches) {
+          await data.deleteUser(m.id);
+          deleted.push(m.email);
+        }
+        json(res, 200, { deleted: deleted.length, users: deleted });
+      })().catch(e => json(res, 500, { error: e.message }));
+    }
+
     const email = url.searchParams.get('email');
-    if (!email) return json(res, 400, { error: 'email required' });
+    if (!email) return json(res, 400, { error: 'email or prefix required' });
     const user = data.getUserByEmail(email);
     if (!user) return json(res, 404, { error: 'User not found' });
 

@@ -137,6 +137,18 @@ exports.createUser = (email, username, passwordHash, passwordSalt, signupMethod 
   });
 };
 
+// Accounts whose username OR email starts with `prefix` — backs the
+// prefix cleanup in the admin endpoint (test accounts tend to share a
+// recognisable prefix). Returns only what's needed to identify and delete
+// them, not full user records.
+exports.findUsersByPrefix = (prefix) => {
+  const { users } = readUsers();
+  const p = String(prefix).toLowerCase();
+  return users
+    .filter(u => u.username.toLowerCase().startsWith(p) || u.email.toLowerCase().startsWith(p))
+    .map(u => ({ id: u.id, username: u.username, email: u.email, createdAt: u.createdAt }));
+};
+
 // Account totals for the owner — there's no admin dashboard, so this feeds
 // the running count in the new-signup email and GET /api/admin/stats.
 // Distinguishes PAYING subscribers (a Stripe subscription behind them) from
