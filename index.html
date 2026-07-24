@@ -509,10 +509,13 @@
     const MAX_FAVORITES = 15;    // must match MAX_FAVORITES in data.js
     // Kill switch for the account-page "Subscribe" button (e.g. while the
     // Stripe subscription product/webhooks aren't configured yet) — lets the
-    // free-account pivot ship without a broken button showing. Flip to true
-    // once the Stripe Dashboard side (recurring price, webhook events,
-    // Customer Portal) is set up.
-    const SUBSCRIPTIONS_ENABLED = false;
+    // free-account pivot ship without a broken button showing.
+    // Enabled 2026-07-22 now that there's a real set to sell (Brush Pen, Ink
+    // Bleed). The button still only works if the server has a valid
+    // STRIPE_SECRET_KEY + a RECURRING STRIPE_SUBSCRIPTION_PRICE_ID, and the
+    // Customer Portal is activated in the Stripe Dashboard — otherwise
+    // /api/stripe/checkout and /portal 500. Flip back to false to hide it.
+    const SUBSCRIPTIONS_ENABLED = true;
     let CANVAS_W = BASE_CANVAS_W, CANVAS_H = BASE_CANVAS_H, EDGE_H = BASE_EDGE_H;
     let RENDER_SCALE = 1;
 
@@ -4953,21 +4956,23 @@
                             <span class="ml-1 align-middle text-[10px] font-bold tracking-wide uppercase bg-[#ffec06] text-black px-1.5 py-0.5 rounded">Beta</span>
                         </h3>
                         <!-- Shown in every state (subscribed or not): it's about the
-                             brushes themselves, not the billing status. -->
+                             brushes themselves, not the billing status. Keep this
+                             list in step with the non-free BRUSH_PRESETS rows —
+                             someone paying should read exactly what they unlock. -->
                         <p class="text-xs text-gray-500 mb-3 leading-relaxed">
-                            The subscriber brushes are <strong>temporarily unavailable</strong> — the
-                            Watercolor, Charcoal, Pastel and Effects sets are being rebuilt from scratch
-                            rather than patched, so they're out of the tool menu until they're good enough
-                            to stand next to the Pen and Chisel Nib. Anything you've already drawn with
-                            them is untouched. Feedback very welcome.
+                            Unlocks <strong>Brush Pen</strong> and <strong>Ink Bleed</strong> — built by
+                            scanning real brush marks on paper, so the texture is actual ink rather than a
+                            simulation. Both are marked <strong>beta</strong> while they're tested on real
+                            drawings; they work, they're just still being refined. Expect one or two new
+                            brushes a month. Feedback very welcome.
                         </p>
                         ${u.subscribed ? `
-                            <p class="text-sm text-gray-700 mb-1">✓ You're subscribed — you'll get the rebuilt brush sets the moment they land, and every release after.</p>
+                            <p class="text-sm text-gray-700 mb-1">✓ You're subscribed — Brush Pen and Ink Bleed are in your tool menu, and you'll get every brush released after.</p>
                             ${u.subscriptionStatus === 'past_due' ? `<p class="text-sm text-red-600 mb-3">Your last payment failed — update your card to keep your subscription active.</p>` : ''}
                             ${SUBSCRIPTIONS_ENABLED && u.stripeSubscription ? `<button id="manageSubBtn" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg">Manage subscription</button>` : ''}
                         ` : `
                             ${!SUBSCRIPTIONS_ENABLED ? `
-                                <p class="text-sm text-gray-500 mb-3">Subscriptions aren't open yet. The brush sets they unlock are being rebuilt — they'll appear here once they're ready.</p>
+                                <p class="text-sm text-gray-500 mb-3">Subscriptions aren't open yet — they'll appear here once they are.</p>
                             ` : `
                                 <p class="text-sm text-gray-500 mb-3">$2.99/mo — funds new brush sets as they're released. Cancel anytime; you'll keep the free brush set (Pen, Chisel Nib, Airbrush, Eraser, Fill) either way.</p>
                                 <button id="subscribeBtn" class="px-4 py-2 bg-[#ffec06] hover:bg-[#e6d405] text-black text-sm font-semibold rounded-lg">Subscribe</button>
