@@ -30,15 +30,47 @@ exports.notifyNewSignup = (user, stats) => {
       + `\nNew: ${stats.last24h} in 24h · ${stats.last7d} in 7d · ${stats.last30d} in 30d`
     : '';
 
-  const payload = JSON.stringify({
-    from: FROM_ADDRESS,
-    to: NOTIFY_EMAIL,
+  sendEmail({
     subject: stats
       ? `New signup #${stats.total}: ${user.username}`
       : `New Exquisite Corpse signup: ${user.username}`,
     text: `${user.username} (${user.email}) just signed up via ${user.signupMethod}.${tally}`,
   });
+};
 
+// Owner alert for an abuse report. Same fire-and-forget contract as signups:
+// no-ops without a key, never throws, must not break the report it's attached
+// to. The report is persisted regardless — this email is just the nudge so the
+// operator knows to go look, which matters in a live class where a bad mark
+// needs dealing with in minutes, not whenever they next check the queue.
+exports.notifyReport = (report, openCount) => {
+  if (!RESEND_API_KEY) {
+    console.log('[notify] RESEND_API_KEY not set — skipping report email', report.id);
+    return;
+  }
+  const c = report.context || {};
+  const lines = [
+    `Type: ${report.type}`,
+    `Reported by: ${report.reporterName}`,
+    report.reason ? `Reason: ${report.reason}` : null,
+    c.targetName ? `Target: ${c.targetName}` : null,
+    c.gameCode ? `Game: ${c.gameCode}` : null,
+    c.where ? `Where: ${c.where}` : null,
+    c.commentText ? `Comment text: "${c.commentText}"` : null,
+    '',
+    `${openCount} open report${openCount === 1 ? '' : 's'} awaiting review.`,
+    `Review: GET /api/admin/reports (x-admin-secret header).`,
+  ].filter(Boolean);
+
+  sendEmail({
+    subject: `⚠️ ${report.type} report on Exquisite Corpse`,
+    text: lines.join('\n'),
+  });
+};
+
+// Shared Resend POST — fire-and-forget, logs errors, never throws.
+function sendEmail({ subject, text }) {
+  const payload = JSON.stringify({ from: FROM_ADDRESS, to: NOTIFY_EMAIL, subject, text });
   const req = https.request({
     hostname: 'api.resend.com',
     path: '/emails',
@@ -55,7 +87,7 @@ exports.notifyNewSignup = (user, stats) => {
       res.on('end', () => console.error('[notify] Resend error', res.statusCode, body));
     }
   });
-  req.on('error', err => console.error('[notify] Failed to send signup email:', err.message));
+  req.on('error', err => console.error('[notify] Failed to send email:', err.message));
   req.write(payload);
   req.end();
-};
+}

@@ -11,8 +11,30 @@ const payments = require('./payments.js');
 const account = require('./account.js');
 const friends = require('./friends.js');
 const data = require('./data.js');
+const notify = require('./notify.js');
+const reports = require('./reports.js');
 
 const PORT = process.env.PORT || 3000;
+
+// Light in-memory throttle for the public report endpoint. Reports email the
+// operator, so an unthrottled endpoint is a spam/DoS vector; this caps a
+// single IP to a handful per window without any external dependency. Resets
+// naturally as entries age out. Not a security boundary — just enough to make
+// mass-reporting annoying rather than free.
+const reportHits = new Map(); // ip -> [timestamps]
+const REPORT_WINDOW_MS = 10 * 60 * 1000;
+const REPORT_MAX_PER_WINDOW = 8;
+function reportRateLimited(ip) {
+  const now = Date.now();
+  const hits = (reportHits.get(ip) || []).filter(t => now - t < REPORT_WINDOW_MS);
+  if (hits.length >= REPORT_MAX_PER_WINDOW) { reportHits.set(ip, hits); return true; }
+  hits.push(now);
+  reportHits.set(ip, hits);
+  if (reportHits.size > 5000) { // crude cap so the map itself can't grow unbounded
+    for (const [k, v] of reportHits) { if (!v.some(t => now - t < REPORT_WINDOW_MS)) reportHits.delete(k); }
+  }
+  return false;
+}
 
 // Background photos live in /photos and are named by the contributor —
 // either an Unsplash export ("first-last-<photoId>-unsplash.jpg") or a
@@ -250,7 +272,10 @@ function publicState(game, playerId) {
     // passthrough/opencanvas only: does the creator currently allow any of
     // their friends to join without the code/link (see openGamesForFriend()).
     openToFriends: !!game.openToFriends,
-    players: game.players.map(p => ({
+    // Kicked players (Open Canvas moderation) are retained in game.players so
+    // their `order` is never reissued to a later joiner, but they must not
+    // appear in anyone's roster or player list.
+    players: game.players.filter(p => !p.kicked).map(p => ({
       name: p.name,
       order: p.order,
       ...playerIcon(p),
@@ -497,7 +522,67 @@ function handleApi(req, res, url) {
     return;
   }
 
+  // ===== REPORTS =====
+  // POST /api/reports { type, reason, context } — anyone can file an abuse
+  // report. Deliberately does NOT require an account: anonymous game players
+  // (class kids drawing via a shared link) are exactly who most needs to be
+  // able to flag something. Reporter identity is captured if they're logged
+  // in, otherwise the reporter supplies a display name (e.g. their in-game
+  // player name). Rate-limited per IP because it emails the operator.
+  if (url.pathname === '/api/reports' && req.method === 'POST') {
+    const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
+      || (req.socket && req.socket.remoteAddress) || 'unknown';
+    if (reportRateLimited(ip)) {
+      return json(res, 429, { error: 'Too many reports — please wait a bit before sending more.' });
+    }
+    return readBody(req, 20_000, (err, body) => {
+      if (err) return json(res, 400, { error: err.message });
+      // Logged-in reporter's identity is authoritative; fall back to the
+      // client-supplied name only for anonymous players.
+      const userId = auth.tryExtractUserId(req);
+      const reporterUser = userId ? data.getUserById(userId) : null;
+      const reporter = reporterUser
+        ? { id: reporterUser.id, name: reporterUser.username }
+        : { id: null, name: body && body.reporterName };
+      return reports.createReport({
+        type: body && body.type,
+        reason: body && body.reason,
+        reporter,
+        context: body && body.context,
+      }).then(report => {
+        // Email is fire-and-forget; the report is already safely stored.
+        try { notify.notifyReport(report, reports.listReports({ status: 'open', limit: 1 }).openCount); } catch (e) { /* never block on the alert */ }
+        json(res, 201, { reported: true });
+      }).catch(e => json(res, e.status || 500, { error: e.error || e.message }));
+    });
+  }
+
   // ===== ADMIN =====
+  // GET /api/admin/reports?status=open|resolved|all — the operator's review
+  // queue (there's no admin dashboard; this + the email IS the moderation UI).
+  if (url.pathname === '/api/admin/reports' && req.method === 'GET') {
+    const ADMIN_SECRET = process.env.ADMIN_SECRET || null;
+    if (!ADMIN_SECRET) return json(res, 403, { error: 'Admin endpoint is not enabled' });
+    if (req.headers['x-admin-secret'] !== ADMIN_SECRET) return json(res, 403, { error: 'Invalid admin secret' });
+    const status = url.searchParams.get('status') || 'open';
+    return json(res, 200, reports.listReports({ status }));
+  }
+
+  // POST /api/admin/reports/:id/resolve { note } — mark a report handled.
+  const resolveMatch = url.pathname.match(/^\/api\/admin\/reports\/([^/]+)\/resolve$/);
+  if (resolveMatch && req.method === 'POST') {
+    const ADMIN_SECRET = process.env.ADMIN_SECRET || null;
+    if (!ADMIN_SECRET) return json(res, 403, { error: 'Admin endpoint is not enabled' });
+    if (req.headers['x-admin-secret'] !== ADMIN_SECRET) return json(res, 403, { error: 'Invalid admin secret' });
+    return readBody(req, 10_000, (err, body) => {
+      if (err) return json(res, 400, { error: err.message });
+      return reports.resolveReport(resolveMatch[1], body && body.note).then(r => {
+        if (r.notFound) return json(res, 404, { error: 'Report not found' });
+        json(res, 200, { resolved: true });
+      }).catch(e => json(res, 500, { error: e.message }));
+    });
+  }
+
   // GET /api/admin/stats — account totals on demand. The signup email carries
   // the same numbers, but that only helps when someone signs up; this answers
   // "where am I at right now". Counts only, no personal data, so a leak of the
@@ -1146,6 +1231,10 @@ function handleApi(req, res, url) {
       // openToFriends toggle is a separate, additive thing: it's about
       // *discovery* (showing up on a friend's home screen with no link
       // needed at all), not about gatekeeping the link itself.
+      // A logged-in player kicked from this Open Canvas can't rejoin it.
+      if (joinerUserId && game.bannedUserIds && game.bannedUserIds.includes(joinerUserId)) {
+        return json(res, 403, { error: 'You have been removed from this game.' });
+      }
       const canJoinActive = game.status === 'active' && (game.mode === 'passthrough' || game.mode === 'opencanvas');
       if (game.status !== 'waiting' && !canJoinActive) return json(res, 409, { error: 'Game already started' });
       // Open Canvas's maxPlayers is really just "how many were expected at
@@ -1480,6 +1569,38 @@ wss.on('connection', (ws, code, player) => {
       g.strokes = [];
       g.lastActivityAt = Date.now();
       broadcastHistory(code, g);
+    } else if (msg.type === 'kick') {
+      // Creator only — same rule as Finish/Clear. Removes a disruptive artist
+      // AND erases everything they drew, so the creator can deal with someone
+      // scribbling something offensive on the shared canvas in one action.
+      if (ws.order !== 1) return;
+      const targetOrder = Number(msg.targetOrder);
+      if (!targetOrder || targetOrder === 1) return; // can't kick yourself
+      const target = g.players.find(p => p.order === targetOrder && !p.kicked);
+      if (!target) return;
+      // Retain the record (flagged) rather than splice, so `order` is never
+      // reissued to a future joiner and can't collide with leftover state.
+      target.kicked = true;
+      // Ban a logged-in kicked player from rejoining this game with the same
+      // account. Anonymous players can rejoin under a fresh name — an accepted
+      // limitation, consistent with how anonymous play works everywhere else.
+      if (target.userId) {
+        if (!g.bannedUserIds) g.bannedUserIds = [];
+        if (!g.bannedUserIds.includes(target.userId)) g.bannedUserIds.push(target.userId);
+      }
+      // Purge their marks and rebuild everyone's canvas from the trimmed log.
+      g.strokes = g.strokes.filter(op => op.order !== targetOrder);
+      g.lastActivityAt = Date.now();
+      broadcastHistory(code, g);
+      // Tell peers to drop the kicked player's live cursor, then notify and
+      // disconnect the kicked player's own socket(s).
+      broadcastToRoom(code, ws, { type: 'presence', order: targetOrder, connected: false });
+      for (const client of room) {
+        if (client.order === targetOrder && client.readyState === 1 /* OPEN */) {
+          try { client.send(JSON.stringify({ type: 'kicked' })); } catch (e) { /* already gone */ }
+          try { client.close(); } catch (e) { /* already gone */ }
+        }
+      }
     } else if (msg.type === 'cursor') {
       broadcastToRoom(code, ws, { type: 'cursor', order: ws.order, x: msg.x, y: msg.y });
     }
@@ -1500,7 +1621,7 @@ server.on('upgrade', (req, socket, head) => {
   const playerId = url.searchParams.get('playerId') || '';
   const game = games.get(code);
   const player = game && game.players.find(p => p.id === playerId);
-  if (!game || game.mode !== 'opencanvas' || !player) {
+  if (!game || game.mode !== 'opencanvas' || !player || player.kicked) {
     socket.destroy();
     return;
   }

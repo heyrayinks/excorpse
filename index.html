@@ -248,15 +248,81 @@
                     <p class="text-gray-700 font-semibold mb-1">${title}</p>
                     <p class="text-gray-500 text-sm mb-6">${message}</p>
                     <div class="flex gap-3">
-                        <button class="confirmModalCancelBtn flex-1 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl">${cancelLabel}</button>
+                        ${cancelLabel ? `<button class="confirmModalCancelBtn flex-1 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl">${cancelLabel}</button>` : ''}
                         <button class="confirmModalOkBtn flex-1 px-4 py-2.5 ${confirmClass} ${confirmTextClass} font-bold rounded-xl">${confirmLabel}</button>
                     </div>
                 </div>`;
             document.body.appendChild(overlay);
             const close = result => { overlay.remove(); resolve(result); };
             overlay.addEventListener('click', e => { if (e.target === overlay) close(false); });
-            overlay.querySelector('.confirmModalCancelBtn').addEventListener('click', () => close(false));
+            const cancelBtn = overlay.querySelector('.confirmModalCancelBtn');
+            if (cancelBtn) cancelBtn.addEventListener('click', () => close(false));
             overlay.querySelector('.confirmModalOkBtn').addEventListener('click', () => close(true));
+        });
+    }
+
+    // Reusable abuse-report modal. `type` is one of comment|creation|player|
+    // game|other (matches reports.js); `context` carries the type-specific
+    // evidence the server snapshots (commentText, targetName, gameCode, etc.).
+    // `targetLabel` is the plain-English "what you're reporting" line. Anonymous
+    // reporters (no account) get a name field; logged-in reporters are
+    // identified server-side from their token, so it's hidden for them.
+    const REPORT_TYPE_LABELS = { comment: 'comment', creation: 'drawing', player: 'artist', game: 'game', other: 'content' };
+    function showReportModal({ type = 'other', context = {}, targetLabel = '' }) {
+        const needsName = !S.user;
+        const typeLabel = REPORT_TYPE_LABELS[type] || 'content';
+        const overlay = document.createElement('div');
+        overlay.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4';
+        overlay.innerHTML = `
+            <div class="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+                <div class="flex items-center justify-between mb-1">
+                    <p class="text-gray-800 font-bold text-lg">🚩 Report ${typeLabel}</p>
+                    <button class="reportModalClose text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+                </div>
+                ${targetLabel ? `<p class="text-gray-500 text-xs mb-3">Reporting: <span class="text-gray-700 font-medium">${escapeHtml(targetLabel)}</span></p>` : ''}
+                <div class="space-y-3">
+                    ${needsName ? `<input id="reportReporterName" type="text" maxlength="60" placeholder="Your name (optional)" class="w-full px-3 py-2 border-2 border-gray-200 rounded-lg text-sm focus:outline-none focus:border-red-300">` : ''}
+                    <textarea id="reportReason" maxlength="1000" rows="3" placeholder="What's wrong? (optional, but helps)" class="w-full px-3 py-2 border-2 border-gray-200 rounded-lg text-sm focus:outline-none focus:border-red-300 resize-none"></textarea>
+                </div>
+                <p id="reportModalError" class="text-xs text-red-600 mt-2 hidden"></p>
+                <div class="flex gap-3 mt-4">
+                    <button class="reportModalCancel flex-1 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl">Cancel</button>
+                    <button class="reportModalSend flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl">Send report</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+        const close = () => overlay.remove();
+        overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+        overlay.querySelector('.reportModalClose').addEventListener('click', close);
+        overlay.querySelector('.reportModalCancel').addEventListener('click', close);
+        const sendBtn = overlay.querySelector('.reportModalSend');
+        sendBtn.addEventListener('click', async () => {
+            const reason = overlay.querySelector('#reportReason').value.trim();
+            const nameEl = overlay.querySelector('#reportReporterName');
+            sendBtn.disabled = true;
+            sendBtn.textContent = 'Sending...';
+            try {
+                // authApi attaches the Bearer token when logged in, so the server
+                // records the real reporter; anonymous reporters just send a name.
+                await authApi('/reports', {
+                    method: 'POST',
+                    body: JSON.stringify({ type, reason, reporterName: nameEl ? nameEl.value.trim() : undefined, context }),
+                });
+                overlay.querySelector('div.bg-white').innerHTML = `
+                    <div class="text-center py-4">
+                        <div class="text-5xl mb-3">✅</div>
+                        <p class="text-gray-800 font-semibold mb-1">Report sent</p>
+                        <p class="text-gray-500 text-sm mb-5">Thanks — we'll take a look. You won't hear back directly, but every report is reviewed.</p>
+                        <button class="reportModalDone px-5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl">Done</button>
+                    </div>`;
+                overlay.querySelector('.reportModalDone').addEventListener('click', close);
+            } catch (e) {
+                const err = overlay.querySelector('#reportModalError');
+                err.textContent = e.message || 'Could not send report.';
+                err.classList.remove('hidden');
+                sendBtn.disabled = false;
+                sendBtn.textContent = 'Send report';
+            }
         });
     }
 
@@ -2699,6 +2765,25 @@
                 ocRemoteStrokeState.delete(msg.order);
             } else if (msg.type === 'finished') {
                 pollState();
+            } else if (msg.type === 'kicked') {
+                // The creator removed us from the shared canvas. Leave cleanly —
+                // disconnectCanvasSocket nulls ocSocket first, so the ensuing
+                // close event's scheduleReconnect guard short-circuits instead
+                // of trying to reconnect us straight back in.
+                stopPolling();
+                disconnectCanvasSocket();
+                clearSession();
+                S.screen = 'home';
+                history.replaceState(null, '', '/');
+                render();
+                showConfirmModal({
+                    title: 'Removed from the canvas',
+                    message: 'The game creator removed you from this drawing.',
+                    confirmLabel: 'OK',
+                    cancelLabel: null,
+                    icon: '👋',
+                });
+                return;
             } else {
                 if (msg.order === (S.game.you && S.game.you.order)) return; // never re-apply our own strokes
                 applyRemoteDrawOp(msg);
@@ -2765,6 +2850,60 @@
         `).join('');
     }
 
+    // Creator-only roster with a Kick action per other artist. Kicking removes
+    // the player AND erases everything they drew (handled server-side), so the
+    // creator can deal with someone scribbling on the shared canvas. Works on
+    // any screen size, unlike the ambient chip list (hidden on small screens).
+    function showPlayersModal() {
+        const g = S.game;
+        if (!g || !(g.you && g.you.order === 1)) return;
+        const overlay = document.createElement('div');
+        overlay.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4';
+        const renderRows = () => {
+            const others = (S.game.players || []).filter(p => p.order !== 1);
+            return others.length
+                ? others.map(p => `
+                    <div class="flex items-center justify-between gap-3 py-2 border-b border-gray-100 last:border-0">
+                        <span class="flex items-center gap-2 min-w-0">
+                            <span class="w-3 h-3 rounded-full shrink-0" style="background:${p.cursorColor || '#999'}"></span>
+                            <span class="font-semibold text-gray-800 truncate">${escapeHtml(p.name)}</span>
+                        </span>
+                        <button data-kick="${p.order}" class="ocKickBtn px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 text-sm font-semibold rounded-lg shrink-0">Kick</button>
+                    </div>`).join('')
+                : `<p class="text-gray-400 text-sm text-center py-4">No other artists are on the canvas yet.</p>`;
+        };
+        overlay.innerHTML = `
+            <div class="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+                <div class="flex items-center justify-between mb-1">
+                    <p class="text-gray-800 font-bold text-lg">👥 Artists on the canvas</p>
+                    <button class="playersModalClose text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+                </div>
+                <p class="text-gray-500 text-xs mb-4">Kicking an artist removes them and erases everything they've drawn. This can't be undone.</p>
+                <div id="playersModalRows">${renderRows()}</div>
+            </div>`;
+        document.body.appendChild(overlay);
+        const close = () => overlay.remove();
+        overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+        overlay.querySelector('.playersModalClose').addEventListener('click', close);
+        overlay.querySelector('#playersModalRows').addEventListener('click', async e => {
+            const btn = e.target.closest('.ocKickBtn');
+            if (!btn) return;
+            const order = Number(btn.dataset.kick);
+            const target = (S.game.players || []).find(p => p.order === order);
+            if (!target) return;
+            const ok = await showConfirmModal({
+                title: `Remove ${target.name}?`,
+                message: `${target.name} will be removed from the canvas and everything they drew will be erased for everyone. They can't be undone.`,
+                confirmLabel: 'Kick & erase',
+                cancelLabel: 'Cancel',
+                icon: '🚫',
+            });
+            if (!ok) return;
+            ocSend({ type: 'kick', targetOrder: order });
+            close();
+        });
+    }
+
     // Briefly flashes the shared Open Canvas theme suggestion center-screen —
     // appended to <body> (not #app) so it survives on top of the canvas and
     // fades on its own rather than needing a dismiss click.
@@ -2799,6 +2938,9 @@
                     <span class="font-bold text-xl text-gray-900">🖌️ Open Canvas</span>
                     <span id="ocConnStatus" class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-400">Connecting…</span>
                     <button id="ocShareBtn" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg">🔗 Share</button>
+                    ${g.you && g.you.order === 1
+                        ? `<button id="ocPlayersBtn" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg" title="Manage who's on the canvas">👥 Players</button>`
+                        : ''}
                 </div>
                 <div class="flex items-center gap-3">
                     <div id="ocPlayerList" class="hidden sm:flex items-center gap-1.5 flex-wrap"></div>
@@ -2891,6 +3033,9 @@
             openToFriends: g.openToFriends,
             playerId: S.playerId,
         }));
+
+        const ocPlayersBtn = document.getElementById('ocPlayersBtn'); // creator only
+        if (ocPlayersBtn) ocPlayersBtn.addEventListener('click', () => showPlayersModal());
 
         // Flash the shared theme suggestion once when everyone first lands on
         // the canvas — same word for every player (picked server-side at
@@ -4805,7 +4950,12 @@
                         ${comments.length ? comments.map(c => `
                             <div class="flex items-start justify-between gap-2 py-1 text-xs border-b border-gray-100 last:border-0">
                                 <span class="text-gray-700"><span class="font-semibold">${escapeHtml(c.authorUsername)}</span>: ${escapeHtml(c.text)}</span>
-                                ${canDelete ? `<button class="deleteCommentBtn text-gray-300 hover:text-red-500 shrink-0" data-key="${key}" data-comment-id="${c.id}">✕</button>` : ''}
+                                <span class="flex items-center gap-1 shrink-0">
+                                    ${(!S.user || S.user.username !== c.authorUsername)
+                                        ? `<button class="reportCommentBtn text-gray-300 hover:text-red-500" title="Report this comment" data-key="${key}" data-comment-id="${c.id}" data-author="${escapeHtml(c.authorUsername)}" data-text="${escapeHtml(c.text)}" data-owner="${ownerId}">🚩</button>`
+                                        : ''}
+                                    ${canDelete ? `<button class="deleteCommentBtn text-gray-300 hover:text-red-500" data-key="${key}" data-comment-id="${c.id}">✕</button>` : ''}
+                                </span>
                             </div>
                         `).join('') : `<p class="text-xs text-gray-400 italic py-1">No comments yet.</p>`}
                         <div class="flex gap-1 mt-2">
@@ -4844,6 +4994,23 @@
                 } catch (e) {
                     alert('Could not post comment: ' + e.message);
                 }
+            });
+        });
+        document.querySelectorAll('.reportCommentBtn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const key = btn.dataset.key;
+                showReportModal({
+                    type: 'comment',
+                    targetLabel: `${btn.dataset.author}: "${btn.dataset.text}"`,
+                    context: {
+                        commentText: btn.dataset.text,
+                        targetName: btn.dataset.author,
+                        commentId: btn.dataset.commentId,
+                        ownerId: btn.dataset.owner,
+                        favoriteId: key.startsWith('fav:') ? key.slice(4) : '',
+                        where: key === 'profile' ? 'profile comment' : 'favorite comment',
+                    },
+                });
             });
         });
         document.querySelectorAll('.deleteCommentBtn').forEach(btn => {
@@ -5641,6 +5808,7 @@
                                     <div class="rounded-lg overflow-hidden border-2 border-gray-200">
                                         <img src="${fav.thumbnail || fav.image}" class="w-full">
                                     </div>
+                                    <button class="reportFavBtn absolute top-1 right-1 bg-black/40 hover:bg-red-600 text-white text-xs rounded-full w-6 h-6 flex items-center justify-center" title="Report this drawing" data-fav-id="${fav.id}">🚩</button>
                                     ${renderCommentThread(fav.comments || [], `fav:${fav.id}`, p.id)}
                                 </div>
                             `).join('') : `<p class="col-span-3 text-sm text-gray-400 italic">No favorites saved yet.</p>`}
@@ -5674,6 +5842,21 @@
                 btn.disabled = false;
                 btn.textContent = `🎮 Start a game with ${p.username}`;
             }
+        });
+
+        document.querySelectorAll('.reportFavBtn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                showReportModal({
+                    type: 'creation',
+                    targetLabel: `A drawing by ${p.username}`,
+                    context: {
+                        targetName: p.username,
+                        ownerId: p.id,
+                        favoriteId: btn.dataset.favId,
+                        where: 'friend profile favorite',
+                    },
+                });
+            });
         });
 
         wireCommentThreads(p.id, renderFriendProfile, (key, comments) => {
