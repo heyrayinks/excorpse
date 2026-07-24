@@ -2855,7 +2855,7 @@
         list.innerHTML = g.players.map(p => {
             const isSelf = p.order === myOrder;
             const hint = isSelf ? 'This is you' : (myOrder === 1 ? 'Tap to report or remove' : 'Tap to report');
-            return `<button type="button" class="ocPill text-xs px-2 py-1 rounded-full text-white font-semibold ${isSelf ? 'opacity-70 cursor-default' : 'hover:ring-2 hover:ring-gray-400/70'}"
+            return `<button type="button" class="ocPill shrink-0 whitespace-nowrap text-xs px-2 py-1 rounded-full text-white font-semibold ${isSelf ? 'opacity-70 cursor-default' : 'hover:ring-2 hover:ring-gray-400/70'}"
                 style="background:${p.cursorColor || '#999'}"
                 data-order="${p.order}" data-name="${escapeHtml(p.name)}" ${isSelf ? 'data-self="1"' : ''}
                 title="${hint}">${escapeHtml(p.name.slice(0, 10))}${isSelf ? ' (you)' : ''}</button>`;
@@ -2944,7 +2944,7 @@
                     <button id="ocShareBtn" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg">🔗 Share</button>
                 </div>
                 <div class="flex items-center gap-3">
-                    <div id="ocPlayerList" class="flex items-center gap-1.5 flex-wrap"></div>
+                    <div id="ocPlayerList" class="flex items-center gap-1.5 flex-nowrap overflow-x-auto max-w-[55vw] min-w-0 sm:max-w-none sm:flex-wrap sm:overflow-visible" style="-webkit-overflow-scrolling:touch; touch-action:pan-x"></div>
                     ${g.you && g.you.order === 1
                         ? `<button id="finishBtn" class="px-5 py-2 bg-[#ffec06] hover:bg-[#e6d405] text-black font-bold rounded-lg">🏁 Finish</button>`
                         : `<span class="text-xs text-gray-400 italic">Only ${escapeHtml((g.players.find(p => p.order === 1) || {}).name || 'the creator')} can finish this drawing</span>`}
