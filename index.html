@@ -2850,25 +2850,33 @@
         `).join('');
     }
 
-    // Creator-only roster with a Kick action per other artist. Kicking removes
-    // the player AND erases everything they drew (handled server-side), so the
-    // creator can deal with someone scribbling on the shared canvas. Works on
-    // any screen size, unlike the ambient chip list (hidden on small screens).
+    // Live roster for every player on the shared canvas. Anyone can Report
+    // another artist mid-game (the abuse case the persistent-content reports
+    // don't cover — someone scribbling something offensive live). The creator
+    // additionally gets Kick, which removes the artist AND erases everything
+    // they drew (handled server-side). Works on any screen size, unlike the
+    // ambient chip list (hidden on small screens).
     function showPlayersModal() {
         const g = S.game;
-        if (!g || !(g.you && g.you.order === 1)) return;
+        if (!g || !g.you) return;
+        const isCreator = g.you.order === 1;
+        const myOrder = g.you.order;
         const overlay = document.createElement('div');
         overlay.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4';
         const renderRows = () => {
-            const others = (S.game.players || []).filter(p => p.order !== 1);
+            const others = (S.game.players || []).filter(p => p.order !== myOrder);
             return others.length
                 ? others.map(p => `
                     <div class="flex items-center justify-between gap-3 py-2 border-b border-gray-100 last:border-0">
                         <span class="flex items-center gap-2 min-w-0">
                             <span class="w-3 h-3 rounded-full shrink-0" style="background:${p.cursorColor || '#999'}"></span>
                             <span class="font-semibold text-gray-800 truncate">${escapeHtml(p.name)}</span>
+                            ${p.order === 1 ? `<span class="text-[10px] text-gray-400 shrink-0">creator</span>` : ''}
                         </span>
-                        <button data-kick="${p.order}" class="ocKickBtn px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 text-sm font-semibold rounded-lg shrink-0">Kick</button>
+                        <span class="flex items-center gap-1.5 shrink-0">
+                            <button data-report="${p.order}" data-name="${escapeHtml(p.name)}" class="ocReportBtn px-2.5 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-semibold rounded-lg" title="Report this artist">🚩</button>
+                            ${isCreator ? `<button data-kick="${p.order}" class="ocKickBtn px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 text-sm font-semibold rounded-lg">Kick</button>` : ''}
+                        </span>
                     </div>`).join('')
                 : `<p class="text-gray-400 text-sm text-center py-4">No other artists are on the canvas yet.</p>`;
         };
@@ -2878,7 +2886,9 @@
                     <p class="text-gray-800 font-bold text-lg">👥 Artists on the canvas</p>
                     <button class="playersModalClose text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
                 </div>
-                <p class="text-gray-500 text-xs mb-4">Kicking an artist removes them and erases everything they've drawn. This can't be undone.</p>
+                <p class="text-gray-500 text-xs mb-4">${isCreator
+                    ? 'Report flags an artist for review. Kicking removes them and erases everything they\'ve drawn — that can\'t be undone.'
+                    : 'Report flags an artist for review. Only the game creator can remove someone.'}</p>
                 <div id="playersModalRows">${renderRows()}</div>
             </div>`;
         document.body.appendChild(overlay);
@@ -2886,6 +2896,15 @@
         overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
         overlay.querySelector('.playersModalClose').addEventListener('click', close);
         overlay.querySelector('#playersModalRows').addEventListener('click', async e => {
+            const reportBtn = e.target.closest('.ocReportBtn');
+            if (reportBtn) {
+                showReportModal({
+                    type: 'player',
+                    targetLabel: `${reportBtn.dataset.name} (on canvas ${g.code})`,
+                    context: { targetName: reportBtn.dataset.name, gameCode: g.code, where: 'open canvas' },
+                });
+                return;
+            }
             const btn = e.target.closest('.ocKickBtn');
             if (!btn) return;
             const order = Number(btn.dataset.kick);
@@ -2938,9 +2957,7 @@
                     <span class="font-bold text-xl text-gray-900">🖌️ Open Canvas</span>
                     <span id="ocConnStatus" class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-400">Connecting…</span>
                     <button id="ocShareBtn" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg">🔗 Share</button>
-                    ${g.you && g.you.order === 1
-                        ? `<button id="ocPlayersBtn" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg" title="Manage who's on the canvas">👥 Players</button>`
-                        : ''}
+                    <button id="ocPlayersBtn" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg" title="See who's on the canvas">👥 Players</button>
                 </div>
                 <div class="flex items-center gap-3">
                     <div id="ocPlayerList" class="hidden sm:flex items-center gap-1.5 flex-wrap"></div>
@@ -3034,7 +3051,7 @@
             playerId: S.playerId,
         }));
 
-        const ocPlayersBtn = document.getElementById('ocPlayersBtn'); // creator only
+        const ocPlayersBtn = document.getElementById('ocPlayersBtn'); // all players
         if (ocPlayersBtn) ocPlayersBtn.addEventListener('click', () => showPlayersModal());
 
         // Flash the shared theme suggestion once when everyone first lands on
