@@ -137,6 +137,31 @@ exports.createUser = (email, username, passwordHash, passwordSalt, signupMethod 
   });
 };
 
+// Account totals for the owner — there's no admin dashboard, so this feeds
+// the running count in the new-signup email and GET /api/admin/stats.
+// Distinguishes PAYING subscribers (a Stripe subscription behind them) from
+// COMPED ones (beta/access-code grants, no Stripe linkage): now that billing
+// is live, "how many subscribers" and "how many are actually paying" are
+// different questions and conflating them would overstate revenue.
+exports.getStats = () => {
+  const { users } = readUsers();
+  const now = Date.now();
+  const DAY = 24 * 60 * 60 * 1000;
+  const since = ms => users.filter(u => u.createdAt && now - u.createdAt < ms).length;
+  const paying = users.filter(u => u.subscribed && u.stripeSubscriptionId).length;
+  const subscribed = users.filter(u => u.subscribed).length;
+  return {
+    total: users.length,
+    subscribed,
+    paying,
+    comped: subscribed - paying,
+    pastDue: users.filter(u => u.subscriptionStatus === 'past_due').length,
+    last24h: since(DAY),
+    last7d: since(7 * DAY),
+    last30d: since(30 * DAY),
+  };
+};
+
 exports.updateUser = (id, updates) => {
   return queue(() => {
     const data = readUsers();

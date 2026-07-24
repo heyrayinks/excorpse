@@ -53,7 +53,8 @@ exports.handleFreeSignup = async (body) => {
 
   const { passwordHash, passwordSalt } = auth.hashPassword(password);
   const user = await data.createUser(email, username, passwordHash, passwordSalt, 'free', false);
-  notify.notifyNewSignup(user);
+  // Stats read AFTER the write lands, so the count includes this signup.
+  notify.notifyNewSignup(user, data.getStats());
 
   const token = auth.signToken(user.id);
   return { token, user: account.serializeUser(user) };
@@ -81,7 +82,8 @@ exports.handleBetaSignup = async (body) => {
 
   const { passwordHash, passwordSalt } = auth.hashPassword(password);
   const user = await data.createUser(email, username, passwordHash, passwordSalt, 'beta-subscriber', true);
-  notify.notifyNewSignup(user);
+  // Stats read AFTER the write lands, so the count includes this signup.
+  notify.notifyNewSignup(user, data.getStats());
 
   const token = auth.signToken(user.id);
   return { token, user: account.serializeUser(user) };

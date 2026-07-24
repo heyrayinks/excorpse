@@ -13,17 +13,30 @@ const NOTIFY_EMAIL = process.env.NOTIFY_EMAIL || 'heyrayinks@gmail.com';
 // Fire-and-forget, fails safe (logs, never throws) — a broken notification
 // must never break the signup it's attached to. No-ops quietly if
 // RESEND_API_KEY isn't configured, so the feature degrades gracefully.
-exports.notifyNewSignup = (user) => {
+// `stats` is optional (data.getStats()) — passed in by the caller rather than
+// required here, so this module stays dependency-free and can't deadlock
+// against the data layer's write queue.
+exports.notifyNewSignup = (user, stats) => {
   if (!RESEND_API_KEY) {
     console.log('[notify] RESEND_API_KEY not set — skipping new-signup email for', user.email);
     return;
   }
 
+  // The running count is the whole point of this email for a solo operator:
+  // there's no admin dashboard, so the inbox IS the analytics.
+  const tally = stats
+    ? `\n\nAccounts: ${stats.total} total`
+      + `\nSubscribers: ${stats.subscribed} (${stats.paying} paying, ${stats.comped} comped)`
+      + `\nNew: ${stats.last24h} in 24h · ${stats.last7d} in 7d · ${stats.last30d} in 30d`
+    : '';
+
   const payload = JSON.stringify({
     from: FROM_ADDRESS,
     to: NOTIFY_EMAIL,
-    subject: `New Exquisite Corpse signup: ${user.username}`,
-    text: `${user.username} (${user.email}) just signed up via ${user.signupMethod}.\n\nTotal signups tracked separately — check the account list if you want a running count.`,
+    subject: stats
+      ? `New signup #${stats.total}: ${user.username}`
+      : `New Exquisite Corpse signup: ${user.username}`,
+    text: `${user.username} (${user.email}) just signed up via ${user.signupMethod}.${tally}`,
   });
 
   const req = https.request({

@@ -498,6 +498,17 @@ function handleApi(req, res, url) {
   }
 
   // ===== ADMIN =====
+  // GET /api/admin/stats — account totals on demand. The signup email carries
+  // the same numbers, but that only helps when someone signs up; this answers
+  // "where am I at right now". Counts only, no personal data, so a leak of the
+  // secret exposes nothing about individual users.
+  if (url.pathname === '/api/admin/stats' && req.method === 'GET') {
+    const ADMIN_SECRET = process.env.ADMIN_SECRET || null;
+    if (!ADMIN_SECRET) return json(res, 403, { error: 'Admin endpoint is not enabled' });
+    if (req.headers['x-admin-secret'] !== ADMIN_SECRET) return json(res, 403, { error: 'Invalid admin secret' });
+    return json(res, 200, data.getStats());
+  }
+
   // DELETE /api/admin/users?email=... — secret-gated escape hatch for
   // removing test/spam accounts, since this app has no admin role/dashboard
   // (single-operator hobby app; a whole role system would be more surface
