@@ -5098,6 +5098,9 @@
         const u = S.user;
         const fd = S.friendsData || { friends: [], incoming: [], outgoing: [], invites: [] };
         const visibleFriends = S.friendsShowAll ? fd.friends : fd.friends.slice(0, 3);
+        // Games tab badge: things awaiting the user's action — pending game
+        // invites plus any open-game chain where it's their turn to draw.
+        const gamesBadge = fd.invites.length + ((S.myOpenGames || []).filter(g => g.needsSubmission).length);
         // Pinned favorites read as photos tacked to the background margins.
         // Tablet+ (md, 768px) has enough width to show both side-by-side;
         // below that (phones), there's no meaningful margin for a second
@@ -5145,6 +5148,8 @@
 
                     <div class="flex gap-2 mb-6 border-b border-gray-200">
                         <button id="tabProfileBtn" class="px-4 py-2 text-sm font-semibold border-b-2 ${S.accountTab === 'profile' ? 'border-[#ffec06] text-black' : 'border-transparent text-gray-400 hover:text-gray-600'}">Profile</button>
+                        <button id="tabFriendsBtn" class="px-4 py-2 text-sm font-semibold border-b-2 ${S.accountTab === 'friends' ? 'border-[#ffec06] text-black' : 'border-transparent text-gray-400 hover:text-gray-600'}">👥 Friends${fd.incoming.length ? ` <span class="ml-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold align-middle">${fd.incoming.length}</span>` : ''}</button>
+                        <button id="tabGamesBtn" class="px-4 py-2 text-sm font-semibold border-b-2 ${S.accountTab === 'games' ? 'border-[#ffec06] text-black' : 'border-transparent text-gray-400 hover:text-gray-600'}">🎮 Games${gamesBadge ? ` <span class="ml-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold align-middle">${gamesBadge}</span>` : ''}</button>
                         <button id="tabSettingsBtn" class="px-4 py-2 text-sm font-semibold border-b-2 ${S.accountTab === 'settings' ? 'border-[#ffec06] text-black' : 'border-transparent text-gray-400 hover:text-gray-600'}">⚙️ Settings</button>
                     </div>
 
@@ -5238,84 +5243,7 @@
                     </div>
 
                     <button id="logoutBtn" class="w-full px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-semibold rounded-lg">Log Out</button>
-                    ` : `
-                    <div class="mb-6">
-                        <h3 class="text-sm font-semibold text-gray-700 mb-2">⭐ Favorites (${u.favorites.length}/${MAX_FAVORITES})</h3>
-                        <div class="grid grid-cols-3 gap-3">
-                            ${u.favorites.length > 0 ? u.favorites.map(fav => `
-                                <div class="relative group">
-                                    <div class="relative rounded-lg overflow-hidden border-2 border-gray-200 cursor-pointer favSelectArea transition" data-fav-id="${fav.id}" title="Tap to select for combining">
-                                        <div class="favOrderBadge hidden absolute bottom-1 right-1 z-10 w-6 h-6 rounded-full bg-[#ffec06] text-black text-xs font-bold items-center justify-center shadow-lg">1</div>
-                                        <img src="${fav.thumbnail || fav.image}" class="w-full pointer-events-none">
-                                        <!-- Download THIS drawing on its own — no forced combine. INSIDE
-                                             .favSelectArea so "bottom" is the image bottom (not the whole
-                                             tile, which extends past the comments row and made it overlap
-                                             the "comments" text). Always visible, not hover-gated: hover
-                                             doesn't exist on touch and this is a primary action. Its click
-                                             handler stops propagation, so it never doubles as a
-                                             combine-selection tap even though it's within the tap target. -->
-                                        <button class="downloadFavBtn absolute bottom-1 left-1 z-10 w-6 h-6 rounded-full bg-black/55 hover:bg-black/80 text-white text-xs flex items-center justify-center transition shadow"
-                                            data-fav-id="${fav.id}" title="Download this drawing">⬇</button>
-                                    </div>
-                                    <button class="removeFavBtn absolute top-1 right-1 w-6 h-6 bg-red-500 hover:bg-red-600 text-white text-xs rounded-full opacity-0 group-hover:opacity-100 transition" data-fav-id="${fav.id}">✕</button>
-                                    <button class="pinFavBtn absolute top-1 left-1 w-6 h-6 rounded-full text-xs transition ${fav.pinnedAt ? 'bg-[#ffec06] text-black opacity-100' : 'bg-black/60 hover:bg-black/80 text-white opacity-0 group-hover:opacity-100'}"
-                                        data-fav-id="${fav.id}" title="${fav.pinnedAt ? 'Unpin from background' : 'Pin to background'}">📌</button>
-                                    ${renderCommentThread(fav.comments || [], `fav:${fav.id}`, u.id)}
-                                </div>
-                            `).join('') : `<p class="col-span-3 text-sm text-gray-400 italic">No favorites saved yet — finish a game and save your favorite creation!</p>`}
-                        </div>
-                        ${u.favorites.length >= 2 ? `
-                            <p class="text-xs text-gray-500 mt-3 mb-1.5 text-center">⬇ downloads a single drawing — or tap up to 3 to combine them onto one printable sheet</p>
-                            <button id="downloadMultipleFavBtn" class="w-full px-4 py-2.5 bg-gray-100 text-gray-400 font-semibold text-sm rounded-xl border border-gray-200 cursor-not-allowed" disabled>
-                                📥 Download Multiple (<span id="favSelectedCount">0</span>/3 selected)
-                            </button>
-                        ` : ''}
-                    </div>
-
-                    <div class="mb-6">
-                        <h3 class="text-sm font-semibold text-gray-700 mb-2">💬 Comments on your profile</h3>
-                        ${renderCommentThread(u.profileComments || [], 'profile', u.id)}
-                    </div>
-
-                    ${S.myOpenGames && S.myOpenGames.length ? `
-                        <div class="mb-6">
-                            <h3 class="text-sm font-semibold text-gray-700 mb-2">🎨 Open games (${S.myOpenGames.length})</h3>
-                            <div class="space-y-2">
-                                ${S.myOpenGames.map((og, i) => {
-                                    const joinedText = og.otherArtists && og.otherArtists.length
-                                        ? ` · with ${og.otherArtists.map(n => escapeHtml(n)).join(', ')}`
-                                        : (og.waitingForPlayers ? ' · waiting for an artist' : '');
-                                    return `
-                                    <div class="flex items-center gap-1.5">
-                                        <button data-idx="${i}" class="openGameBtn flex-1 min-w-0 flex items-center justify-between gap-2 bg-[#fffce8] hover:bg-[#fff9d1] border border-[#ffec06] rounded-lg px-3 py-2 text-left transition">
-                                            <span class="text-sm text-gray-900 truncate">${og.continuingFrom ? `Continue ${escapeHtml(og.continuingFrom)}'s creation` : 'Your creation'} — ${SECTION_LABELS[og.section] || ''}${joinedText}</span>
-                                            <span class="text-gray-600 text-xs font-semibold shrink-0">${og.needsSubmission ? 'Continue →' : 'Waiting...'}</span>
-                                        </button>
-                                        <button data-idx="${i}" class="cancelOpenGameBtn shrink-0 w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg" title="Cancel this chain">✕</button>
-                                    </div>
-                                `;
-                                }).join('')}
-                            </div>
-                        </div>
-                    ` : ''}
-
-                    ${fd.invites.length ? `
-                        <div class="mb-6">
-                            <h3 class="text-sm font-semibold text-gray-700 mb-2">🎮 Game invites</h3>
-                            <div class="space-y-2">
-                                ${fd.invites.map(inv => `
-                                    <div class="flex items-center justify-between bg-purple-50 rounded-lg px-3 py-2">
-                                        <span class="text-sm text-gray-700">${escapeHtml(inv.fromUsername)} invited you to play</span>
-                                        <div class="flex gap-1 shrink-0">
-                                            <button class="acceptInviteBtn text-xs px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded" data-invite-id="${inv.id}">Join</button>
-                                            <button class="declineInviteBtn text-xs px-2 py-1 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded" data-invite-id="${inv.id}">Decline</button>
-                                        </div>
-                                    </div>
-                                `).join('')}
-                            </div>
-                        </div>
-                    ` : ''}
-
+                    ` : S.accountTab === 'friends' ? `
                     <div class="mb-6">
                         <h3 class="text-sm font-semibold text-gray-700 mb-2">👥 Friends${fd.friends.length ? ` (${fd.friends.length})` : ''}</h3>
                         <div class="flex gap-2 mb-2">
@@ -5355,6 +5283,89 @@
                     </div>
 
                     <button id="logoutBtn" class="w-full px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-semibold rounded-lg">Log Out</button>
+                    ` : S.accountTab === 'games' ? `
+                    ${S.myOpenGames && S.myOpenGames.length ? `
+                        <div class="mb-6">
+                            <h3 class="text-sm font-semibold text-gray-700 mb-2">🎨 Open games (${S.myOpenGames.length})</h3>
+                            <div class="space-y-2">
+                                ${S.myOpenGames.map((og, i) => {
+                                    const joinedText = og.otherArtists && og.otherArtists.length
+                                        ? ` · with ${og.otherArtists.map(n => escapeHtml(n)).join(', ')}`
+                                        : (og.waitingForPlayers ? ' · waiting for an artist' : '');
+                                    return `
+                                    <div class="flex items-center gap-1.5">
+                                        <button data-idx="${i}" class="openGameBtn flex-1 min-w-0 flex items-center justify-between gap-2 bg-[#fffce8] hover:bg-[#fff9d1] border border-[#ffec06] rounded-lg px-3 py-2 text-left transition">
+                                            <span class="text-sm text-gray-900 truncate">${og.continuingFrom ? `Continue ${escapeHtml(og.continuingFrom)}'s creation` : 'Your creation'} — ${SECTION_LABELS[og.section] || ''}${joinedText}</span>
+                                            <span class="text-gray-600 text-xs font-semibold shrink-0">${og.needsSubmission ? 'Continue →' : 'Waiting...'}</span>
+                                        </button>
+                                        <button data-idx="${i}" class="cancelOpenGameBtn shrink-0 w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg" title="Cancel this chain">✕</button>
+                                    </div>
+                                `;
+                                }).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    ${fd.invites.length ? `
+                        <div class="mb-6">
+                            <h3 class="text-sm font-semibold text-gray-700 mb-2">🎮 Game invites</h3>
+                            <div class="space-y-2">
+                                ${fd.invites.map(inv => `
+                                    <div class="flex items-center justify-between bg-purple-50 rounded-lg px-3 py-2">
+                                        <span class="text-sm text-gray-700">${escapeHtml(inv.fromUsername)} invited you to play</span>
+                                        <div class="flex gap-1 shrink-0">
+                                            <button class="acceptInviteBtn text-xs px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded" data-invite-id="${inv.id}">Join</button>
+                                            <button class="declineInviteBtn text-xs px-2 py-1 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded" data-invite-id="${inv.id}">Decline</button>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    ${(!S.myOpenGames || !S.myOpenGames.length) && !fd.invites.length ? `<p class="text-sm text-gray-400 italic mb-6">No games in progress — start one from the home screen!</p>` : ''}
+
+                    <button id="logoutBtn" class="w-full px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-semibold rounded-lg">Log Out</button>
+                    ` : `
+                    <div class="mb-6">
+                        <h3 class="text-sm font-semibold text-gray-700 mb-2">⭐ Favorites (${u.favorites.length}/${MAX_FAVORITES})</h3>
+                        <div class="grid grid-cols-3 gap-3">
+                            ${u.favorites.length > 0 ? u.favorites.map(fav => `
+                                <div class="relative group">
+                                    <div class="relative rounded-lg overflow-hidden border-2 border-gray-200 cursor-pointer favSelectArea transition" data-fav-id="${fav.id}" title="Tap to select for combining">
+                                        <div class="favOrderBadge hidden absolute bottom-1 right-1 z-10 w-6 h-6 rounded-full bg-[#ffec06] text-black text-xs font-bold items-center justify-center shadow-lg">1</div>
+                                        <img src="${fav.thumbnail || fav.image}" class="w-full pointer-events-none">
+                                        <!-- Download THIS drawing on its own — no forced combine. INSIDE
+                                             .favSelectArea so "bottom" is the image bottom (not the whole
+                                             tile, which extends past the comments row and made it overlap
+                                             the "comments" text). Always visible, not hover-gated: hover
+                                             doesn't exist on touch and this is a primary action. Its click
+                                             handler stops propagation, so it never doubles as a
+                                             combine-selection tap even though it's within the tap target. -->
+                                        <button class="downloadFavBtn absolute bottom-1 left-1 z-10 w-6 h-6 rounded-full bg-black/55 hover:bg-black/80 text-white text-xs flex items-center justify-center transition shadow"
+                                            data-fav-id="${fav.id}" title="Download this drawing">⬇</button>
+                                    </div>
+                                    <button class="removeFavBtn absolute top-1 right-1 w-6 h-6 bg-red-500 hover:bg-red-600 text-white text-xs rounded-full opacity-0 group-hover:opacity-100 transition" data-fav-id="${fav.id}">✕</button>
+                                    <button class="pinFavBtn absolute top-1 left-1 w-6 h-6 rounded-full text-xs transition ${fav.pinnedAt ? 'bg-[#ffec06] text-black opacity-100' : 'bg-black/60 hover:bg-black/80 text-white opacity-0 group-hover:opacity-100'}"
+                                        data-fav-id="${fav.id}" title="${fav.pinnedAt ? 'Unpin from background' : 'Pin to background'}">📌</button>
+                                    ${renderCommentThread(fav.comments || [], `fav:${fav.id}`, u.id)}
+                                </div>
+                            `).join('') : `<p class="col-span-3 text-sm text-gray-400 italic">No favorites saved yet — finish a game and save your favorite creation!</p>`}
+                        </div>
+                        ${u.favorites.length >= 2 ? `
+                            <p class="text-xs text-gray-500 mt-3 mb-1.5 text-center">⬇ downloads a single drawing — or tap up to 3 to combine them onto one printable sheet</p>
+                            <button id="downloadMultipleFavBtn" class="w-full px-4 py-2.5 bg-gray-100 text-gray-400 font-semibold text-sm rounded-xl border border-gray-200 cursor-not-allowed" disabled>
+                                📥 Download Multiple (<span id="favSelectedCount">0</span>/3 selected)
+                            </button>
+                        ` : ''}
+                    </div>
+
+                    <div class="mb-6">
+                        <h3 class="text-sm font-semibold text-gray-700 mb-2">💬 Comments on your profile</h3>
+                        ${renderCommentThread(u.profileComments || [], 'profile', u.id)}
+                    </div>
+
+                    <button id="logoutBtn" class="w-full px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-semibold rounded-lg">Log Out</button>
                     `}
                 </div>
             </div>
@@ -5369,6 +5380,8 @@
         });
 
         document.getElementById('tabProfileBtn').addEventListener('click', () => { S.accountTab = 'profile'; render(); });
+        document.getElementById('tabFriendsBtn').addEventListener('click', () => { S.accountTab = 'friends'; render(); });
+        document.getElementById('tabGamesBtn').addEventListener('click', () => { S.accountTab = 'games'; render(); });
         document.getElementById('tabSettingsBtn').addEventListener('click', () => { S.accountTab = 'settings'; render(); });
 
         if (S.accountTab === 'settings') {
@@ -5669,7 +5682,9 @@
                 if (fav) fav.comments = comments;
             }
         });
+        } // end S.accountTab === 'profile'
 
+        if (S.accountTab === 'friends') {
         const addFriendBtn = document.getElementById('addFriendBtn');
         if (addFriendBtn) {
             addFriendBtn.addEventListener('click', async () => {
@@ -5712,6 +5727,26 @@
             });
         });
 
+        const toggleFriendsBtn = document.getElementById('toggleFriendsBtn');
+        if (toggleFriendsBtn) {
+            toggleFriendsBtn.addEventListener('click', () => {
+                S.friendsShowAll = !S.friendsShowAll;
+                renderAccount();
+            });
+        }
+
+        document.querySelectorAll('.friendTile').forEach(tile => {
+            tile.addEventListener('click', () => {
+                S.friendProfileUserId = tile.dataset.userId;
+                S.friendProfileData = null;
+                S.expandedCommentKey = null;
+                S.screen = 'friendProfile';
+                render();
+            });
+        });
+        } // end S.accountTab === 'friends'
+
+        if (S.accountTab === 'games') {
         document.querySelectorAll('.openGameBtn').forEach(btn => {
             btn.addEventListener('click', () => enterMyGame(S.myOpenGames[Number(btn.dataset.idx)]));
         });
@@ -5774,25 +5809,7 @@
                 }
             });
         });
-
-        const toggleFriendsBtn = document.getElementById('toggleFriendsBtn');
-        if (toggleFriendsBtn) {
-            toggleFriendsBtn.addEventListener('click', () => {
-                S.friendsShowAll = !S.friendsShowAll;
-                renderAccount();
-            });
-        }
-
-        document.querySelectorAll('.friendTile').forEach(tile => {
-            tile.addEventListener('click', () => {
-                S.friendProfileUserId = tile.dataset.userId;
-                S.friendProfileData = null;
-                S.expandedCommentKey = null;
-                S.screen = 'friendProfile';
-                render();
-            });
-        });
-        } // end S.accountTab === 'profile'
+        } // end S.accountTab === 'games'
     }
 
     // ---------- FRIEND PROFILE ----------
