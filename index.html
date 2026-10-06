@@ -1088,7 +1088,7 @@
                             <img src="/graphics/Exquisite-corpse-logo.svg" alt="Exquisite Corpse logo" class="h-24 w-24">
                             Exquisite Corpse
                         </h1>
-                        <p class="text-gray-600">2-20 artists. A creation each. Zero spoilers.</p>
+                        <p class="text-gray-600">Draw together, or draw solo.</p>
                         <button id="aboutLink" type="button" class="text-xs text-purple-500 hover:text-purple-700 hover:underline">Why the name Exquisite Corpse?</button>
                     </div>
 
@@ -1102,6 +1102,10 @@
                             Everyone draws at once! Round 1: everyone draws a <b>head</b>.
                             Then sheets rotate — draw a <b>torso</b> on someone else's sheet (you only see the edge!),
                             then <b>legs</b>. At the end: one gloriously weird creation per artist.
+                        </p>
+                        <p class="text-sm text-gray-700 mt-2">
+                            Just want to draw? Pick <b>Open Canvas</b> below for a blank page of your own.
+                            You can open it to friends whenever you like.
                         </p>
                     </div>
 
@@ -1164,7 +1168,7 @@
                                 <input type="radio" name="mode" value="opencanvas" class="w-4 h-4">
                                 <div class="ml-3">
                                     <p class="font-semibold text-gray-900 text-sm">Open Canvas</p>
-                                    <p class="text-xs text-gray-600">Everyone draws on one shared canvas together, live — no rounds, no rotation.</p>
+                                    <p class="text-xs text-gray-600">One blank canvas. Sketch solo, or invite others to draw on it live. No rounds, no rotation.</p>
                                 </div>
                             </label>
                         </div>
@@ -1211,14 +1215,14 @@
         function playerCountLabel(n) { return n === '1' ? '?' : n; }
         function updatePlayerCountHint(mode, n) {
             const hint = document.getElementById('playerCountHint');
-            if (n === '1') {
+            if (mode === 'opencanvas') {
+                hint.textContent = 'Draw on your own, or share the code and draw together. You\'ll see each other\'s cursors and strokes live. Whoever starts the canvas decides when it\'s finished.';
+            } else if (n === '1') {
                 hint.textContent = "Anyone with the link can join — you'll decide when to start, and the roster locks in at whatever headcount you've got then.";
             } else if (mode === 'passthrough') {
                 hint.textContent = n === '2'
                     ? 'Each of you draws a head on your own sheet, then you swap for the torso, then swap back for the legs — no need to be online at the same time.'
                     : 'Each of you draws a head on your own sheet, then sheets rotate for the torso and legs — no need to be online at the same time.';
-            } else if (mode === 'opencanvas') {
-                hint.textContent = 'Everyone draws on the same canvas at the same time — see each other\'s cursors and strokes live. Anyone can finish it for the group.';
             } else {
                 hint.textContent = n === '2'
                     ? 'With 2 players, your sheets simply swap back and forth each round.'
@@ -1240,6 +1244,7 @@
                 }
                 document.getElementById('playerCountValue').textContent = playerCountLabel(slider.value);
                 updatePlayerCountHint(mode, slider.value);
+                document.getElementById('createBtn').textContent = mode === 'opencanvas' ? '🖌️ Start Drawing' : '🎮 Create Game';
             });
         });
         document.getElementById('playerCountSlider').addEventListener('input', e => {
@@ -4096,22 +4101,23 @@
         const g = S.game;
         const image = g.canvasImage;
         const artists = g.players.map(p => p.name);
+        const solo = artists.length === 1;
 
         app.innerHTML = `
         <div class="min-h-screen app-bg p-4 py-10">
             <div class="max-w-lg mx-auto">
                 <div class="text-center mb-8">
-                    <h1 class="text-4xl font-bold text-white mb-2">🎉 The Big Reveal!</h1>
-                    <p class="text-white/80">One shared canvas, ${artists.length} artists.</p>
+                    <h1 class="text-4xl font-bold text-white mb-2">${solo ? '🎨 All done!' : '🎉 The Big Reveal!'}</h1>
+                    <p class="text-white/80">${solo ? 'Drawn solo.' : `One shared canvas, ${artists.length} artists.`}</p>
                 </div>
 
                 <div class="bg-white rounded-2xl shadow-2xl p-4">
                     <div class="rounded-lg overflow-hidden border-2 border-gray-200">
                         <img src="${image}" class="block w-full">
                     </div>
-                    <p class="mt-3 text-xs text-gray-500"><b>Artists:</b> ${artists.map(a => escapeHtml(a)).join(', ')}</p>
+                    ${solo ? '' : `<p class="mt-3 text-xs text-gray-500"><b>Artists:</b> ${artists.map(a => escapeHtml(a)).join(', ')}</p>`}
                     <button id="ocReplayBtn" class="mt-3 w-full px-3 py-2.5 bg-[#ffec06] hover:bg-[#e6d405] text-black text-sm font-bold rounded-lg">
-                        ⏱ Watch Replay
+                        ${solo ? '⏱ Watch your timelapse' : '⏱ Watch Replay'}
                     </button>
                     <div class="grid grid-cols-2 gap-2 mt-2">
                         <button id="ocDownloadBtn" class="px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-lg">
