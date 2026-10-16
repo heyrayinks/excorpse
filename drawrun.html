@@ -50,6 +50,8 @@
   table{width:100%;border-collapse:collapse;margin:8px 0}
   td,th{padding:8px;border-bottom:1px solid #444;text-align:left}
   .win{color:var(--accent);font-size:22px;font-weight:700;text-align:center;margin:10px 0}
+  #bp{width:100%;background:var(--paper);border:2px solid #000;cursor:crosshair;margin-top:8px}
+  .prompt{font-size:20px;font-weight:700;color:var(--accent);margin:10px 0 2px}
 </style>
 </head>
 <body>
@@ -73,6 +75,22 @@
         <div class="hint">Your drawing's outline is your hitbox. Leave it blank for a stick figure.</div>
       </div>
     </div>
+  </div>
+  <div class="card" style="max-width:860px">
+    <h2>Draw your controls</h2>
+    <div class="hint" style="margin-top:0">When you're the runner you tap these to jump and duck. Where you put them is up to you — the builder can see them.</div>
+    <div class="row" id="bpick"><button class="chip on" data-b="jump">Jump button</button><button class="chip" data-b="duck">Duck button</button></div>
+    <div class="prompt" id="bprompt"></div>
+    <div class="hint" id="bsub" style="margin-top:0"></div>
+    <div class="row" id="btools">
+      <button class="chip on" data-t="pen">Pen</button><button class="chip" data-t="erase">Eraser</button>
+      <input type="color" id="bcol" value="#111111" style="width:34px;height:30px;padding:0;border:0;background:none">
+      <label class="sz">Size <input type="range" id="bsz" min="2" max="20" value="5"></label>
+      <button class="btn" id="breplace">Re-place box</button><button class="btn" id="bclear">Clear art</button>
+    </div>
+    <div class="hint" id="bmsg" style="color:#ffb4ac;min-height:18px"></div>
+    <canvas id="bp" width="800" height="400"></canvas>
+    <div class="hint">This is your screen during a run. Skip a button and you'll get the default arrow.</div>
   </div>
   <div class="card">
     <h2>Play</h2>
@@ -243,10 +261,88 @@ function showFinal(m){
 }
 
 /* ================= round setup ================= */
-const DEFAULT_BTN={jump:{x:640,y:250,s:110,art:mk(110,110)},duck:{x:50,y:250,s:110,art:mk(110,110)}};
-for(const k of ['jump','duck']){const g=DEFAULT_BTN[k].art.getContext('2d'),s=110,dir=k==='jump'?-1:1;g.strokeStyle='#111';g.lineWidth=8;g.lineCap='round';g.lineJoin='round';g.beginPath();g.moveTo(s*.5,s*(dir<0?.8:.2));g.lineTo(s*.5,s*(dir<0?.2:.8));g.moveTo(s*.25,s*(dir<0?.45:.55));g.lineTo(s*.5,s*(dir<0?.2:.8));g.lineTo(s*.75,s*(dir<0?.45:.55));g.stroke();}
+/* ================= runner controls (drawn buttons) ================= */
+const BTN={jump:{x:640,y:250,s:110,art:mk(110,110)},duck:{x:50,y:250,s:110,art:mk(110,110)}};
+function paintDefault(k,c){const g=c.getContext('2d'),s=c.width,dir=k==='jump'?-1:1;g.clearRect(0,0,s,s);g.strokeStyle='#111';g.lineWidth=8;g.lineCap='round';g.lineJoin='round';g.beginPath();g.moveTo(s*.5,s*(dir<0?.8:.2));g.lineTo(s*.5,s*(dir<0?.2:.8));g.moveTo(s*.25,s*(dir<0?.45:.55));g.lineTo(s*.5,s*(dir<0?.2:.8));g.lineTo(s*.75,s*(dir<0?.45:.55));g.stroke();}
+paintDefault('jump',BTN.jump.art);paintDefault('duck',BTN.duck.art);
+const setup={jump:{box:null,art:null},duck:{box:null,art:null}};
+let curB='jump',bdrag=null,bdraw=null,btool='pen';
+const bp=$('bp'),bpx=bp.getContext('2d');
+const PROMPT={jump:'Draw a jump button',duck:'Draw a button to duck'};
+function boxFrom(x0,y0,x1,y1){
+  const s=Math.round(clamp(Math.max(Math.abs(x1-x0),Math.abs(y1-y0)),56,160));
+  const x=x1>=x0?x0:x0-s,y=y1>=y0?y0:y0-s;
+  return {x:Math.round(clamp(x,0,VW-s)),y:Math.round(clamp(y,0,LH-s)),s};
+}
+const overlaps=(a,b)=>a.x<b.x+b.s+4&&b.x<a.x+a.s+4&&a.y<b.y+b.s+4&&b.y<a.y+a.s+4;
+function setBox(k,box){setup[k].box=box;setup[k].art=box?mk(box.s,box.s):null;}
+const hasArt=k=>!!(setup[k].box&&!isBlank(setup[k].art));
+function saveButtons(){const o={};for(const k of ['jump','duck'])o[k]={box:setup[k].box,art:setup[k].art?setup[k].art.toDataURL():null};store.set('dr.buttons',JSON.stringify(o));}
+function loadButtons(){
+  try{const d=JSON.parse(store.get('dr.buttons')||'null');if(!d)return;
+    for(const k of ['jump','duck']){const q=d[k];if(q&&q.box&&q.art){setBox(k,q.box);const i=new Image();i.onload=()=>{setup[k].art.getContext('2d').drawImage(i,0,0);btnUI();redrawB();commitButtons();};i.src=q.art;}}
+  }catch(e){}
+}
+// Turn what the player drew into what the run uses; anything missing gets the
+// default arrow, moved to a free spot if it would sit on top of a custom button.
+function commitButtons(){
+  for(const k of ['jump','duck']){
+    if(hasArt(k)){const q=setup[k];BTN[k]={x:q.box.x,y:q.box.y,s:q.box.s,art:q.art};}
+    else{const c=mk(110,110);paintDefault(k,c);BTN[k]={x:k==='jump'?640:50,y:250,s:110,art:c,def:true};}
+  }
+  const spots=[[640,250],[50,250],[640,50],[50,50],[345,250]];
+  for(const k of ['jump','duck']){
+    const o=BTN[k==='jump'?'duck':'jump'];
+    if(BTN[k].def&&overlaps(BTN[k],o)){const sp=spots.find(([x,y])=>!overlaps({x,y,s:110},o));if(sp){BTN[k].x=sp[0];BTN[k].y=sp[1];}}
+  }
+}
+function btnUI(){
+  $('bprompt').textContent=PROMPT[curB];
+  $('bsub').textContent=setup[curB].box?'Draw inside the box. The pen only draws within it.':'Drag on the screen below to place its box (56–160 px), then draw inside it.';
+  document.querySelectorAll('#bpick .chip').forEach(c=>{const k=c.dataset.b;c.classList.toggle('on',k===curB);c.textContent=(k==='jump'?'Jump button':'Duck button')+(hasArt(k)?' ✓':'');});
+}
+function redrawB(){
+  bpx.fillStyle='#fbf7ee';bpx.fillRect(0,0,VW,LH);
+  bpx.strokeStyle='rgba(0,0,0,.08)';bpx.lineWidth=1;
+  for(let x=0;x<=VW;x+=100){bpx.beginPath();bpx.moveTo(x,0);bpx.lineTo(x,LH);bpx.stroke();}
+  for(let y=0;y<=LH;y+=100){bpx.beginPath();bpx.moveTo(0,y);bpx.lineTo(VW,y);bpx.stroke();}
+  bpx.strokeStyle='#111';bpx.lineWidth=8;bpx.beginPath();bpx.moveTo(0,340);bpx.lineTo(VW,340);bpx.stroke();
+  for(const k of ['jump','duck']){const q=setup[k];if(!q.box)continue;
+    bpx.fillStyle=k===curB?'rgba(245,197,24,.18)':'rgba(0,0,0,.04)';bpx.fillRect(q.box.x,q.box.y,q.box.s,q.box.s);
+    bpx.drawImage(q.art,q.box.x,q.box.y);
+    bpx.strokeStyle=k===curB?'#f5a000':'#555';bpx.lineWidth=3;bpx.strokeRect(q.box.x,q.box.y,q.box.s,q.box.s);}
+  if(bdrag){const r=boxFrom(bdrag.x0,bdrag.y0,bdrag.x1,bdrag.y1);bpx.setLineDash([6,5]);bpx.strokeStyle='#f5a000';bpx.lineWidth=3;bpx.strokeRect(r.x,r.y,r.s,r.s);bpx.setLineDash([]);}
+}
+function bseg(g,a,b){g.save();g.globalCompositeOperation=btool==='erase'?'destination-out':'source-over';g.strokeStyle=$('bcol').value;g.lineWidth=+$('bsz').value;g.lineCap='round';g.lineJoin='round';g.beginPath();g.moveTo(a[0],a[1]);g.lineTo(b[0]+.01,b[1]);g.stroke();g.restore();}
+const bpos2=e=>{const r=bp.getBoundingClientRect();return [(e.clientX-r.left)*VW/r.width,(e.clientY-r.top)*LH/r.height];};
+bp.addEventListener('pointerdown',e=>{
+  const p=bpos2(e),q=setup[curB];$('bmsg').textContent='';
+  try{bp.setPointerCapture(e.pointerId);}catch(_){}
+  if(!q.box)bdrag={x0:p[0],y0:p[1],x1:p[0],y1:p[1]};
+  else if(p[0]>=q.box.x&&p[0]<=q.box.x+q.box.s&&p[1]>=q.box.y&&p[1]<=q.box.y+q.box.s){const l=[p[0]-q.box.x,p[1]-q.box.y];bdraw=l;bseg(q.art.getContext('2d'),l,l);redrawB();}
+  else $('bmsg').textContent='Draw inside the box (or use "Re-place box").';
+});
+bp.addEventListener('pointermove',e=>{
+  const p=bpos2(e),q=setup[curB];
+  if(bdrag){bdrag.x1=p[0];bdrag.y1=p[1];redrawB();}
+  else if(bdraw){const l=[clamp(p[0]-q.box.x,0,q.box.s),clamp(p[1]-q.box.y,0,q.box.s)];bseg(q.art.getContext('2d'),bdraw,l);bdraw=l;redrawB();}
+});
+const bEnd2=()=>{
+  if(bdrag){
+    const r=boxFrom(bdrag.x0,bdrag.y0,bdrag.x1,bdrag.y1),other=setup[curB==='jump'?'duck':'jump'].box;bdrag=null;
+    if(other&&overlaps(r,other))$('bmsg').textContent="Buttons can't overlap — try another spot.";else setBox(curB,r);
+  }
+  bdraw=null;btnUI();redrawB();saveButtons();commitButtons();
+};
+bp.addEventListener('pointerup',bEnd2);bp.addEventListener('pointercancel',bEnd2);
+document.querySelectorAll('#bpick .chip').forEach(c=>c.onclick=()=>{curB=c.dataset.b;$('bmsg').textContent='';btnUI();redrawB();});
+document.querySelectorAll('#btools .chip').forEach(c=>c.onclick=()=>{btool=c.dataset.t;document.querySelectorAll('#btools .chip').forEach(x=>x.classList.toggle('on',x===c));});
+$('breplace').onclick=()=>{setBox(curB,null);btnUI();redrawB();saveButtons();commitButtons();};
+$('bclear').onclick=()=>{const q=setup[curB];if(q.art)q.art.getContext('2d').clearRect(0,0,q.art.width,q.art.height);btnUI();redrawB();saveButtons();commitButtons();};
+commitButtons();loadButtons();btnUI();redrawB();
+
 function setupRound(m){
-  world.reset();
+  world.reset();commitButtons();
   const role=m.runnerId===me.id?'runner':'builder';
   const sprite=mk(64,64);defaultAvatar(sprite.getContext('2d'));
   G={n:m.n,of:m.of,role,mode:'countdown',cdEnd:performance.now()+(m.rejoin?0:m.countdownMs),sprite,hb:{ox:22,w:20,h:m.hbH||55,by1:62},
@@ -310,7 +406,7 @@ const rc=$('run'),rx=rc.getContext('2d');
 rc.addEventListener('pointerdown',e=>{
   if(!G||G.role!=='runner')return;
   const r=rc.getBoundingClientRect(),x=(e.clientX-r.left)*VW/r.width,y=(e.clientY-r.top)*LH/r.height;
-  for(const k of ['jump','duck']){const b=DEFAULT_BTN[k];
+  for(const k of ['jump','duck']){const b=BTN[k];
     if(x>=b.x-12&&x<=b.x+b.s+12&&y>=b.y-12&&y<=b.y+b.s+12){rc.setPointerCapture(e.pointerId);if(k==='duck'){ptrs.set(e.pointerId,'duck');if(G.sim)G.sim.flash.duck=1;}else press('jump');return;}}
 });
 const pUp=e=>ptrs.delete(e.pointerId);rc.addEventListener('pointerup',pUp);rc.addEventListener('pointercancel',pUp);
@@ -350,7 +446,7 @@ function overlayFor(g,w){
 function drawRunner(){
   const S=G.sim,rn={px:S.px,py:S.py,crouch:S.crouch,bul:G.bullets.map(b=>[b.x,b.y])};
   drawWorld(rx,DR.camXFor(S.px),VW,rn);
-  for(const k of ['jump','duck']){const b=DEFAULT_BTN[k],f=S.flash[k];S.flash[k]=Math.max(0,f-.08);const held=k==='duck'&&S.crouch;
+  for(const k of ['jump','duck']){const b=BTN[k],f=S.flash[k];S.flash[k]=Math.max(0,f-.08);const held=k==='duck'&&S.crouch;
     rx.save();rx.globalAlpha=.88;rx.fillStyle='rgba(255,255,255,.7)';rx.fillRect(b.x,b.y,b.s,b.s);rx.drawImage(b.art,b.x,b.y);
     if(f>0||held){rx.fillStyle=`rgba(245,197,24,${held?.45:f*.5})`;rx.fillRect(b.x,b.y,b.s,b.s);}
     rx.strokeStyle='#333';rx.lineWidth=3;rx.strokeRect(b.x,b.y,b.s,b.s);rx.restore();}
@@ -436,7 +532,7 @@ requestAnimationFrame(loop);
 const s0=sess.get();
 if(s0){me.token=s0.token;me.code=s0.code;connect(()=>send({type:'rejoin',code:s0.code,token:s0.token}));}
 else connect();
-window.__dr={get G(){return G;},world,get lobby(){return lobby;},send};
+window.__dr={get G(){return G;},BTN,setup,world,get lobby(){return lobby;},send};
 })();
 </script>
 </body>
