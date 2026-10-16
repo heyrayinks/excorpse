@@ -13,6 +13,7 @@ const friends = require('./friends.js');
 const data = require('./data.js');
 const notify = require('./notify.js');
 const reports = require('./reports.js');
+const drawrun = require('./drawrun-server.js');
 
 const PORT = process.env.PORT || 3000;
 
@@ -1461,7 +1462,7 @@ const mimeTypes = {
   '.ico': 'image/x-icon',
 };
 
-const PUBLIC_FILES = new Set(['/index.html', '/brush-engine.js']);
+const PUBLIC_FILES = new Set(['/index.html', '/drawrun.html', '/drawrun-world.js', '/brush-engine.js']);
 const PUBLIC_DIRS = ['/graphics/', '/photos/'];
 
 const server = http.createServer((req, res) => {
@@ -1487,6 +1488,8 @@ const server = http.createServer((req, res) => {
   }
   if (url.pathname === '/' || url.pathname.startsWith('/game')) {
     filePath = path.join(__dirname, 'index.html');
+  } else if (url.pathname === '/drawrun') {
+    filePath = path.join(__dirname, 'drawrun.html');
   }
 
   // Allowlist, not blocklist: this handler used to serve ANY file under the
@@ -1627,6 +1630,7 @@ wss.on('connection', (ws, code, player) => {
 
 server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
+  if (drawrun.handleUpgrade(req, socket, head, url)) return;
   if (url.pathname !== '/ws/canvas') { socket.destroy(); return; }
 
   const code = (url.searchParams.get('code') || '').toUpperCase();
