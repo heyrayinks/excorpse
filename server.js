@@ -1461,6 +1461,9 @@ const mimeTypes = {
   '.ico': 'image/x-icon',
 };
 
+const PUBLIC_FILES = new Set(['/index.html', '/brush-engine.js']);
+const PUBLIC_DIRS = ['/graphics/', '/photos/'];
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
@@ -1483,6 +1486,15 @@ const server = http.createServer((req, res) => {
     return res.end('Forbidden');
   }
   if (url.pathname === '/' || url.pathname.startsWith('/game')) {
+    filePath = path.join(__dirname, 'index.html');
+  }
+
+  // Allowlist, not blocklist: this handler used to serve ANY file under the
+  // project dir, which exposed data/users.json (the account database on the
+  // Railway volume), server source and package files over plain GET. Anything
+  // not explicitly public now gets the same SPA fallback a missing file does.
+  const rel = '/' + path.relative(__dirname, filePath).split(path.sep).join('/');
+  if (!PUBLIC_FILES.has(rel) && !PUBLIC_DIRS.some(d => rel.startsWith(d))) {
     filePath = path.join(__dirname, 'index.html');
   }
 
