@@ -359,8 +359,8 @@ function handle(req, res, url, { json, readBody }) {
     } catch (e) {
       refund(limitKind, limitKey); refund('ip', ip); refund('global', 'all');
       const out = { error: e.message || 'Something went wrong.' };
-      // Rejection reasons are for the operator only (same secret as the other admin endpoints).
-      if (e.problems && process.env.ADMIN_SECRET && req.headers['x-admin-secret'] === process.env.ADMIN_SECRET) out.problems = e.problems;
+      // Validator messages only describe the teacher's own input, so they're safe to return (helps debugging without log access).
+      if (e.problems) out.problems = e.problems;
       return json(res, e.status || 500, out);
     }
   });
