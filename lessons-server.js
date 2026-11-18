@@ -1,6 +1,7 @@
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 // AI art-lesson generator for the educator hub. A teacher states grade,
 // supplies and time; we ask Claude for a structured lesson plan that may use
@@ -17,6 +18,10 @@ const ANON_PER_DAY = Number(process.env.LESSON_ANON_PER_DAY) || 2;
 const EMAIL_PER_DAY = Number(process.env.LESSON_EMAIL_PER_DAY) || 10;
 const IP_PER_DAY = Number(process.env.LESSON_IP_PER_DAY) || 30;
 const GLOBAL_PER_DAY = Number(process.env.LESSON_GLOBAL_PER_DAY) || 400;
+// Emailing a lesson: per-recipient cap stops the form being used to pester a third party.
+const MAIL_TO_PER_DAY = 3;
+const MAIL_IP_PER_DAY = 8;
+const MAIL_GLOBAL_PER_DAY = 300;
 
 const DATA_DIR = path.join(__dirname, 'data');
 const EMAILS_FILE = path.join(DATA_DIR, 'lesson-emails.json');
@@ -44,19 +49,138 @@ function writeEmails(store) {
   });
 }
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
-function recordEmail(email, grade) {
+// `marketing` = the person explicitly opted in to occasional emails (the consent
+// checkbox). Generating a lesson counts toward `lessons`; opting in again after
+// an unsubscribe is fresh consent and clears the unsubscribe.
+function recordEmail(email, grade, { marketing = false, lesson = false } = {}) {
   return queue(() => {
     const store = readEmails();
     let sub = store.subscribers.find(s => s.email === email);
     if (!sub) {
-      sub = { email, createdAt: Date.now(), lessons: 0, lastGrade: null };
+      sub = { email, createdAt: Date.now(), lessons: 0, lastGrade: null, marketing: false, consentAt: null };
       store.subscribers.push(sub);
     }
-    sub.lessons += 1;
-    sub.lastGrade = grade;
+    if (lesson) sub.lessons += 1;
+    if (grade) sub.lastGrade = grade;
+    if (marketing) {
+      sub.marketing = true;
+      sub.consentAt = Date.now();
+      delete sub.unsubscribedAt;
+    }
     sub.lastSeenAt = Date.now();
     return writeEmails(store);
   });
+}
+function unsubscribeEmail(email) {
+  return queue(() => {
+    const store = readEmails();
+    const sub = store.subscribers.find(s => s.email === email);
+    if (!sub) return;
+    sub.marketing = false;
+    sub.unsubscribedAt = Date.now();
+    return writeEmails(store);
+  });
+}
+
+// ---------- unsubscribe tokens (stateless, HMAC of the address) ----------
+function unsubToken(email) {
+  return crypto.createHmac('sha256', process.env.SESSION_SECRET || '').update('lesson-unsub:' + email).digest('base64url').slice(0, 22);
+}
+function validUnsubToken(email, token) {
+  const a = Buffer.from(unsubToken(email));
+  const b = Buffer.from(String(token || ''));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+const APP_URL = () => (process.env.APP_URL || 'https://www.ecdraw.art').replace(/\/$/, '');
+
+// ---------- recently generated lessons ----------
+// The email endpoint sends ONLY lessons the server generated, looked up by id —
+// never text supplied by the browser — so it can't be used to relay arbitrary
+// content to arbitrary addresses. Short TTL, capped size, memory only.
+const recentLessons = new Map(); // id -> { lesson, ts }
+const LESSON_TTL_MS = 2 * 60 * 60 * 1000;
+function stashLesson(lesson) {
+  const id = crypto.randomBytes(9).toString('base64url');
+  recentLessons.set(id, { lesson, ts: Date.now() });
+  if (recentLessons.size > 1000) {
+    const now = Date.now();
+    for (const [k, v] of recentLessons) { if (now - v.ts > LESSON_TTL_MS) recentLessons.delete(k); }
+    while (recentLessons.size > 1000) recentLessons.delete(recentLessons.keys().next().value);
+  }
+  return id;
+}
+function getStashedLesson(id) {
+  const hit = recentLessons.get(String(id || ''));
+  if (!hit || Date.now() - hit.ts > LESSON_TTL_MS) return null;
+  return hit.lesson;
+}
+
+// ---------- email delivery (Resend) ----------
+// Needs a Resend-verified sending domain to reach arbitrary teachers: the
+// default onboarding@resend.dev sandbox sender only delivers to the Resend
+// account owner's own address. Set LESSON_FROM_EMAIL once the domain is verified.
+const RESEND_API_KEY = process.env.RESEND_API_KEY || null;
+const FROM_ADDRESS = process.env.LESSON_FROM_EMAIL || '';
+// Off until a sender is configured: without a verified domain Resend only
+// delivers to the account owner, so every other teacher's send would fail.
+const MAIL_ENABLED = !!(RESEND_API_KEY && FROM_ADDRESS);
+function sendResend({ to, subject, html, text, headers }) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify({ from: FROM_ADDRESS, to: [to], subject, html, text, headers });
+    const req = https.request({
+      hostname: 'api.resend.com', path: '/emails', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), Authorization: `Bearer ${RESEND_API_KEY}` },
+    }, res => {
+      let body = '';
+      res.on('data', c => { body += c; });
+      res.on('end', () => {
+        if (res.statusCode >= 400) { console.error('[lessons] Resend error', res.statusCode, body.slice(0, 400)); return reject(new Error('resend ' + res.statusCode)); }
+        resolve();
+      });
+    });
+    req.setTimeout(15_000, () => req.destroy(new Error('resend timeout')));
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
+const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+function lessonEmail(L, to) {
+  const gradeLabel = L.grade === 'K' ? 'Kindergarten' : `Grade ${L.grade}`;
+  const unsub = `${APP_URL()}/api/lessons/unsubscribe?e=${encodeURIComponent(to)}&t=${unsubToken(to)}`;
+  const h3 = t => `<h3 style="margin:22px 0 6px;font-size:16px;border-bottom:2px solid #ffec06;padding-bottom:3px">${esc(t)}</h3>`;
+  const ul = items => `<ul style="margin:6px 0;padding-left:22px">${items.map(i => `<li style="margin:3px 0">${esc(i)}</li>`).join('')}</ul>`;
+  const html = `<div style="font:15px/1.5 -apple-system,Segoe UI,Arial,sans-serif;color:#1a1a1a;max-width:640px;margin:0 auto;padding:16px">
+<h2 style="margin:0 0 4px;font-size:24px">${esc(L.title)}</h2>
+<p style="margin:4px 0 12px;color:#555">${esc(gradeLabel)} &middot; ${L.minutes} minutes${L.artConcept ? ' &middot; ' + esc(L.artConcept) : ''}</p>
+<p>${esc(L.summary)}</p><p><b>Objective:</b> ${esc(L.objective.replace(/^objective:\s*/i, ''))}</p>
+${h3('Materials')}${ul(L.materials.map(m => m.item))}
+${L.vocabulary.length ? h3('Vocabulary') + `<ul style="margin:6px 0;padding-left:22px">${L.vocabulary.map(v => `<li><b>${esc(v.term)}:</b> ${esc(v.definition)}</li>`).join('')}</ul>` : ''}
+${L.prep.length ? h3('Teacher prep') + ul(L.prep) : ''}
+${h3('Lesson steps')}
+${L.steps.map((s, i) => `<div style="border:1px solid #ddd;border-radius:8px;padding:8px 12px;margin:8px 0"><b>${i + 1}. ${esc(s.title)} (${s.minutes} min)</b>${ul(s.instructions)}${s.tip ? `<div style="color:#555;font-style:italic">Tip: ${esc(s.tip)}</div>` : ''}</div>`).join('')}
+${h3('Differentiation')}<p><b>Support:</b> ${esc(L.differentiation.support)}</p><p><b>Challenge:</b> ${esc(L.differentiation.challenge)}</p>
+${L.assessment.length ? h3('Assessment') + ul(L.assessment) : ''}
+${L.safetyNotes.length ? h3('Safety notes') + ul(L.safetyNotes) : ''}
+<p style="margin-top:28px;font-size:12px;color:#777;border-top:1px solid #ddd;padding-top:12px">AI-written lesson from the Art Educator Hub at <a href="${APP_URL()}/lessons">ecdraw.art/lessons</a>. Please review before teaching.<br>You got this because this address was entered to receive it. <a href="${esc(unsub)}">Unsubscribe from future emails</a>.</p></div>`;
+
+  const t = [L.title, `${gradeLabel} | ${L.minutes} minutes`, '', L.summary, '', 'Objective: ' + L.objective.replace(/^objective:\s*/i, ''), '', 'MATERIALS'];
+  L.materials.forEach(m => t.push('- ' + m.item));
+  if (L.vocabulary.length) { t.push('', 'VOCABULARY'); L.vocabulary.forEach(v => t.push(`- ${v.term}: ${v.definition}`)); }
+  if (L.prep.length) { t.push('', 'TEACHER PREP'); L.prep.forEach(p => t.push('- ' + p)); }
+  t.push('', 'STEPS');
+  L.steps.forEach((s, i) => { t.push(`${i + 1}. ${s.title} (${s.minutes} min)`); s.instructions.forEach(x => t.push('   - ' + x)); if (s.tip) t.push('   Tip: ' + s.tip); });
+  t.push('', 'DIFFERENTIATION', 'Support: ' + L.differentiation.support, 'Challenge: ' + L.differentiation.challenge);
+  if (L.assessment.length) { t.push('', 'ASSESSMENT'); L.assessment.forEach(x => t.push('- ' + x)); }
+  if (L.safetyNotes.length) { t.push('', 'SAFETY'); L.safetyNotes.forEach(x => t.push('- ' + x)); }
+  t.push('', '---', 'AI-written lesson from ecdraw.art/lessons. Please review before teaching.', 'Unsubscribe: ' + unsub);
+  return {
+    subject: `Your art lesson: ${L.title}`.slice(0, 150),
+    html,
+    text: t.join('\n'),
+    headers: { 'List-Unsubscribe': `<${unsub}>` },
+  };
 }
 exports.listSubscribers = () => {
   const subs = readEmails().subscribers;
@@ -309,7 +433,55 @@ function clientIp(req) {
 
 function handle(req, res, url, { json, readBody }) {
   if (url.pathname === '/api/lessons/config' && req.method === 'GET') {
-    json(res, 200, { enabled: !!API_KEY, anonPerDay: ANON_PER_DAY, emailPerDay: EMAIL_PER_DAY });
+    json(res, 200, { enabled: !!API_KEY, emailEnabled: MAIL_ENABLED, anonPerDay: ANON_PER_DAY, emailPerDay: EMAIL_PER_DAY });
+    return true;
+  }
+
+  // GET /api/lessons/unsubscribe?e=<email>&t=<token> — linked from every email.
+  if (url.pathname === '/api/lessons/unsubscribe' && req.method === 'GET') {
+    const e = clean(url.searchParams.get('e'), 254).toLowerCase();
+    const ok = EMAIL_RE.test(e) && validUnsubToken(e, url.searchParams.get('t'));
+    const done = ok ? unsubscribeEmail(e).catch(err => console.error('[lessons] unsubscribe failed:', err.message)) : Promise.resolve();
+    done.then(() => {
+      res.writeHead(ok ? 200 : 400, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unsubscribe</title>
+<body style="font:16px/1.5 system-ui,sans-serif;max-width:480px;margin:60px auto;padding:0 16px;text-align:center">
+<h2>${ok ? 'You’re unsubscribed' : 'That link didn’t work'}</h2>
+<p>${ok ? 'You won’t get any more emails from the Art Educator Hub.' : 'The unsubscribe link looks incomplete. Reply to any of our emails and we’ll remove you by hand.'}</p>
+<p><a href="/lessons">Back to the lesson maker</a></p></body>`);
+    });
+    return true;
+  }
+
+  // POST /api/lessons/email { lessonId, email, joinList } — email a lesson that
+  // was just generated. Sends ONLY server-held lessons (see stashLesson).
+  if (url.pathname === '/api/lessons/email' && req.method === 'POST') {
+    if (!MAIL_ENABLED) { json(res, 503, { error: 'Email isn’t available right now. You can still print or copy the lesson.' }); return true; }
+    readBody(req, 2_000, async (err, body) => {
+      if (err) return json(res, 400, { error: err.message });
+      const to = clean(body && body.email, 254).toLowerCase();
+      if (!EMAIL_RE.test(to)) return json(res, 400, { error: 'That email address doesn’t look right.' });
+      const lesson = getStashedLesson(body.lessonId);
+      if (!lesson) return json(res, 410, { error: 'That lesson has expired. Please make it again, then email it.' });
+
+      const ip = clientIp(req);
+      if (count('mailglobal', 'all') >= MAIL_GLOBAL_PER_DAY || count('mailip', ip) >= MAIL_IP_PER_DAY) {
+        return json(res, 429, { error: 'Too many emails sent today. Please come back tomorrow, or print the lesson instead.' });
+      }
+      if (count('mailto', to) >= MAIL_TO_PER_DAY) {
+        return json(res, 429, { error: 'That address has already received several lessons today.' });
+      }
+      bump('mailglobal', 'all'); bump('mailip', ip); bump('mailto', to);
+      try {
+        await sendResend({ to, ...lessonEmail(lesson, to) });
+      } catch (e) {
+        refund('mailglobal', 'all'); refund('mailip', ip); refund('mailto', to);
+        return json(res, 502, { error: 'We couldn’t send that email. Please try again, or print the lesson instead.' });
+      }
+      const joined = body.joinList === true;
+      if (joined) recordEmail(to, lesson.grade, { marketing: true }).catch(e => console.error('[lessons] email save failed:', e.message));
+      return json(res, 200, { sent: true, joined });
+    });
     return true;
   }
 
@@ -358,9 +530,9 @@ function handle(req, res, url, { json, readBody }) {
 
     try {
       const lesson = await generateLesson(input);
-      if (email) recordEmail(email, input.grade).catch(e => console.error('[lessons] email save failed:', e.message));
+      if (email) recordEmail(email, input.grade, { marketing: true, lesson: true }).catch(e => console.error('[lessons] email save failed:', e.message));
       const remaining = Math.max(0, (email ? EMAIL_PER_DAY : ANON_PER_DAY) - count(limitKind, limitKey));
-      return json(res, 200, { lesson, remaining, usedEmail: !!email });
+      return json(res, 200, { lesson, lessonId: stashLesson(lesson), remaining, usedEmail: !!email });
     } catch (e) {
       refund(limitKind, limitKey); refund('ip', ip); refund('global', 'all');
       const out = { error: e.message || 'Something went wrong.' };
