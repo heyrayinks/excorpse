@@ -14,6 +14,7 @@ const data = require('./data.js');
 const notify = require('./notify.js');
 const reports = require('./reports.js');
 const drawrun = require('./drawrun-server.js');
+const lessons = require('./lessons-server.js');
 
 const PORT = process.env.PORT || 3000;
 
@@ -432,6 +433,19 @@ function handleApi(req, res, url) {
       files = fs.readdirSync(path.join(__dirname, 'photos')).filter(f => /\.(jpe?g|png|webp)$/i.test(f));
     } catch (e) { /* no photos/ directory yet — empty pool, caller falls back to the gradient */ }
     return json(res, 200, { photos: files.map(f => ({ file: f, credit: creditFromFilename(f) })) });
+  }
+
+  // ===== EDUCATOR HUB: AI art lessons =====
+  // GET /api/lessons/config, POST /api/lessons/generate — see lessons-server.js
+  if (lessons.handle(req, res, url, { json, readBody })) return;
+
+  // GET /api/admin/lesson-subscribers — the educator email list (same
+  // secret-gated, no-dashboard pattern as the report queue).
+  if (url.pathname === '/api/admin/lesson-subscribers' && req.method === 'GET') {
+    const ADMIN_SECRET = process.env.ADMIN_SECRET || null;
+    if (!ADMIN_SECRET) return json(res, 403, { error: 'Admin endpoint is not enabled' });
+    if (req.headers['x-admin-secret'] !== ADMIN_SECRET) return json(res, 403, { error: 'Invalid admin secret' });
+    return json(res, 200, lessons.listSubscribers());
   }
 
   // ===== STRIPE/PAYMENTS =====
@@ -1462,7 +1476,7 @@ const mimeTypes = {
   '.ico': 'image/x-icon',
 };
 
-const PUBLIC_FILES = new Set(['/index.html', '/drawrun.html', '/drawrun-world.js', '/brush-engine.js']);
+const PUBLIC_FILES = new Set(['/index.html', '/drawrun.html', '/drawrun-world.js', '/brush-engine.js', '/lessons.html']);
 const PUBLIC_DIRS = ['/graphics/', '/photos/'];
 
 const server = http.createServer((req, res) => {
@@ -1490,6 +1504,8 @@ const server = http.createServer((req, res) => {
     filePath = path.join(__dirname, 'index.html');
   } else if (url.pathname === '/drawrun') {
     filePath = path.join(__dirname, 'drawrun.html');
+  } else if (url.pathname === '/lessons' || url.pathname === '/lessons/') {
+    filePath = path.join(__dirname, 'lessons.html');
   }
 
   // Allowlist, not blocklist: this handler used to serve ANY file under the
