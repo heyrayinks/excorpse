@@ -219,7 +219,7 @@ function checkLesson(raw, input) {
       return { problem: `Material "${item}" has from="${from}", which is not in the supplies list. Use only these exact supply strings or "none": ${JSON.stringify(input.supplies)}.` };
     }
     // "none" is only for hands/desks/the room — catch consumables smuggled in under it.
-    if (from.toLowerCase() === 'none' && /newspaper|paper towel|scrap|tray|cup|sponge|apron|smock|tape|string|bucket|bowl/i.test(item)) {
+    if (from.toLowerCase() === 'none' && /\b(newspaper|paper towels?|scrap|trays?|cups?|sponges?|aprons?|smocks?|tape|string|buckets?|bowls?)\b/i.test(item)) {
       return { problem: `Material "${item}" is not in the supplies list. "none" is only for students' hands, desks and the room. Remove it and redesign without it.` };
     }
     materials.push({ item, from: from.toLowerCase() === 'none' ? 'none' : supplySet.get(from.toLowerCase()) });
@@ -278,6 +278,7 @@ async function generateLesson(input) {
   const baseMsg = JSON.stringify(params);
 
   let feedback = '';
+  const problems = [];
   for (let attempt = 0; attempt < 2; attempt++) {
     const text = await callClaude(feedback ? `${baseMsg}\n\nYour previous attempt was rejected: ${feedback}\nReturn a corrected JSON object.` : baseMsg);
     let result;
@@ -285,9 +286,10 @@ async function generateLesson(input) {
     catch (e) { result = { problem: 'Response was not valid JSON.' }; }
     if (result.lesson) return result.lesson;
     feedback = result.problem;
+    problems.push(feedback);
     console.warn('[lessons] attempt', attempt + 1, 'rejected:', feedback);
   }
-  throw Object.assign(new Error('Could not build a lesson that fits those supplies and that time. Try adding a supply or adjusting the time.'), { status: 422 });
+  throw Object.assign(new Error('Could not build a lesson that fits those supplies and that time. Try adding a supply or adjusting the time.'), { status: 422, problems });
 }
 
 // ---------- HTTP handler ----------
@@ -356,7 +358,10 @@ function handle(req, res, url, { json, readBody }) {
       return json(res, 200, { lesson, remaining, usedEmail: !!email });
     } catch (e) {
       refund(limitKind, limitKey); refund('ip', ip); refund('global', 'all');
-      return json(res, e.status || 500, { error: e.message || 'Something went wrong.' });
+      const out = { error: e.message || 'Something went wrong.' };
+      // Rejection reasons are for the operator only (same secret as the other admin endpoints).
+      if (e.problems && process.env.ADMIN_SECRET && req.headers['x-admin-secret'] === process.env.ADMIN_SECRET) out.problems = e.problems;
+      return json(res, e.status || 500, out);
     }
   });
   return true;
