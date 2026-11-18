@@ -150,14 +150,14 @@ OUTPUT: Respond with ONLY a single JSON object, no markdown fences, no commentar
   "assessment": [ "quick check or rubric criterion" ],
   "safetyNotes": [ "only if relevant; otherwise an empty array" ]
 }
-Keep 2-5 vocabulary terms, 2-4 prep items, 4-7 steps, and 3-4 assessment items.`;
+Keep 2-5 vocabulary terms, 2-4 prep items, 4-7 steps, and 3-4 assessment items. Be concise: instructions are short, concrete sentences (2-4 per step). Do not use double quotes inside strings; use single quotes instead.`;
 
 // ---------- Anthropic call ----------
 function callClaude(userContent) {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify({
       model: MODEL,
-      max_tokens: 3500,
+      max_tokens: 6000,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userContent }],
     });
@@ -182,7 +182,8 @@ function callClaude(userContent) {
         try {
           const parsed = JSON.parse(body);
           const text = (parsed.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
-          resolve(text);
+          if (parsed.stop_reason === 'max_tokens') console.warn('[lessons] response truncated at max_tokens');
+          resolve(parsed.stop_reason === 'max_tokens' ? { truncated: true, text } : { text });
         } catch (e) {
           reject(Object.assign(new Error('Unexpected response from the lesson generator.'), { status: 502 }));
         }
@@ -280,10 +281,14 @@ async function generateLesson(input) {
   let feedback = '';
   const problems = [];
   for (let attempt = 0; attempt < 2; attempt++) {
-    const text = await callClaude(feedback ? `${baseMsg}\n\nYour previous attempt was rejected: ${feedback}\nReturn a corrected JSON object.` : baseMsg);
+    const { text, truncated } = await callClaude(feedback ? `${baseMsg}\n\nYour previous attempt was rejected: ${feedback}\nReturn a corrected JSON object.` : baseMsg);
     let result;
     try { result = checkLesson(extractJson(text), input); }
-    catch (e) { result = { problem: 'Response was not valid JSON.' }; }
+    catch (e) {
+      result = { problem: truncated
+        ? 'Response was cut off for length. Be much more concise: one short sentence per instruction, at most 3 instructions per step.'
+        : `Response was not valid JSON (${e.message}). Return only one JSON object with all strings properly escaped.` };
+    }
     if (result.lesson) return result.lesson;
     feedback = result.problem;
     problems.push(feedback);
