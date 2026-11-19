@@ -436,17 +436,8 @@ function handleApi(req, res, url) {
   }
 
   // ===== EDUCATOR HUB: AI art lessons =====
-  // GET /api/lessons/config, POST /api/lessons/generate — see lessons-server.js
+  // /api/lessons/config|generate|saved — see lessons-server.js
   if (lessons.handle(req, res, url, { json, readBody })) return;
-
-  // GET /api/admin/lesson-subscribers — the educator email list (same
-  // secret-gated, no-dashboard pattern as the report queue).
-  if (url.pathname === '/api/admin/lesson-subscribers' && req.method === 'GET') {
-    const ADMIN_SECRET = process.env.ADMIN_SECRET || null;
-    if (!ADMIN_SECRET) return json(res, 403, { error: 'Admin endpoint is not enabled' });
-    if (req.headers['x-admin-secret'] !== ADMIN_SECRET) return json(res, 403, { error: 'Invalid admin secret' });
-    return json(res, 200, lessons.listSubscribers());
-  }
 
   // ===== STRIPE/PAYMENTS =====
   // POST /api/stripe/checkout (auth required) — an already-logged-in, free
@@ -645,6 +636,7 @@ function handleApi(req, res, url) {
         const deleted = [];
         for (const m of matches) {
           await data.deleteUser(m.id);
+          await lessons.deleteUserLessons(m.id).catch(() => {});
           deleted.push(m.email);
         }
         json(res, 200, { deleted: deleted.length, users: deleted });
@@ -656,7 +648,7 @@ function handleApi(req, res, url) {
     const user = data.getUserByEmail(email);
     if (!user) return json(res, 404, { error: 'User not found' });
 
-    return data.deleteUser(user.id).then(() => {
+    return data.deleteUser(user.id).then(() => lessons.deleteUserLessons(user.id).catch(() => {})).then(() => {
       json(res, 200, { deleted: true, email });
     }).catch(e => {
       json(res, 500, { error: e.message });
@@ -761,6 +753,7 @@ function handleApi(req, res, url) {
         if (err) return json(res, 400, { error: err.message });
         try {
           const result = await auth.handleDeleteAccount(userId, body);
+          await lessons.deleteUserLessons(userId).catch(e => console.error('[lessons] cleanup failed:', e.message));
           json(res, 200, result);
         } catch (e) {
           const status = e.status || 500;

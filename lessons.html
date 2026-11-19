@@ -12,17 +12,20 @@
     --bg:#f4f3ee; --card:#fff; --line:#dcdad0; --err:#b3261e;
   }
   *{box-sizing:border-box}
+  [hidden]{display:none!important}
   body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
   header.top{background:#000;color:#fff;display:flex;align-items:center;gap:14px;padding:10px 16px}
   header.top img{width:40px;height:40px}
   header.top a{color:#fff;text-decoration:none}
-  header.top .brand{font-weight:700;letter-spacing:.3px}
+  header.top .brand{font-weight:700;letter-spacing:.3px;white-space:nowrap}
   header.top .brand span{color:var(--accent)}
-  header.top nav{margin-left:auto;display:flex;gap:16px;font-size:14px}
-  header.top nav a{color:#ccc}
-  header.top nav a:hover{color:var(--accent)}
-  header.top .brand,header.top nav a{white-space:nowrap}
-  @media (max-width:520px){header.top nav a:first-child{display:none}header.top{gap:10px}}
+  header.top nav{margin-left:auto;display:flex;gap:14px;align-items:center;font-size:14px}
+  header.top nav a,header.top nav button.link{color:#ccc;white-space:nowrap;background:none;border:0;font:inherit;cursor:pointer;padding:0}
+  header.top nav a:hover,header.top nav button.link:hover{color:var(--accent)}
+  header.top .who{color:#fff;font-weight:600;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  header.top .pill-btn{background:var(--accent);color:#000;border:0;border-radius:999px;padding:6px 14px;font:inherit;font-weight:700;cursor:pointer}
+  header.top .pill-btn{white-space:nowrap}
+  @media (max-width:560px){header.top{gap:10px}header.top .hide-sm,header.top .who{display:none}header.top nav{gap:10px}}
   main{max-width:760px;margin:0 auto;padding:20px 16px 60px}
   h1{font-size:30px;line-height:1.15;margin:12px 0 6px}
   .lede{color:var(--muted);margin:0 0 20px;font-size:17px}
@@ -36,10 +39,9 @@
   .chip span{display:inline-block;padding:7px 12px;border:2px solid var(--line);border-radius:999px;background:#fff;font-size:14px;user-select:none}
   .chip input:checked+span{background:var(--accent);border-color:#000;font-weight:600}
   .chip input:focus-visible+span{outline:3px solid #000;outline-offset:2px}
-  select,input[type=text],input[type=number],input[type=email],textarea{
+  select,input[type=text],input[type=number],input[type=email],input[type=password]{
     width:100%;border:2px solid var(--line);border-radius:10px;padding:10px 12px;font:inherit;background:#fff;color:var(--ink)}
-  select:focus,input:focus,textarea:focus{outline:0;border-color:#000}
-  textarea{resize:vertical;min-height:64px}
+  select:focus,input:focus{outline:0;border-color:#000}
   .row{display:flex;gap:12px;flex-wrap:wrap}
   .row>div{flex:1 1 160px}
   .time-presets{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
@@ -47,17 +49,18 @@
   .btn:hover{background:#f0efe8}
   .btn.primary{background:var(--accent);font-size:18px;padding:14px 20px;width:100%}
   .btn.primary:hover{background:var(--accent-dark)}
-  .btn:disabled{opacity:.55;cursor:wait}
+  .btn:disabled{opacity:.6;cursor:default}
   .btn.sm{padding:7px 12px;font-size:14px}
-  .consent{display:none;margin-top:8px;font-size:13px;color:var(--muted)}
-  .consent.show{display:flex;gap:8px;align-items:flex-start}
-  .consent input{margin-top:3px}
+  .btn.danger{border-color:var(--err);color:var(--err)}
   #msg{display:none;border-radius:10px;padding:12px 14px;margin:14px 0 0;font-size:15px}
   #msg.err{display:block;background:#fdecea;border:1px solid #f3b8b3;color:var(--err)}
   #msg.info{display:block;background:#fffbd1;border:1px solid #e6dc6a}
+  #msg .btn{margin-top:8px}
   .more{font-size:14px;color:var(--muted);margin-top:10px;text-align:center}
+  .nudge{background:#fffbd1;border:1px solid #e6dc6a;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .nudge p{margin:0;flex:1 1 220px;font-size:15px}
   /* ---- lesson output ---- */
-  #result{display:none}
+  #result,#mine{display:none}
   .lesson h2{font-size:26px;margin:0 0 4px}
   .lesson .meta{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 14px}
   .pill{background:var(--accent);border:1px solid #000;border-radius:999px;padding:2px 10px;font-size:13px;font-weight:600}
@@ -73,14 +76,37 @@
   @media (max-width:560px){.two{grid-template-columns:1fr}}
   .safety{background:#fff4e5;border:1px solid #f0c27b;border-radius:10px;padding:8px 14px;margin-top:16px}
   .actions{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  #saveMsg{display:none;border-radius:10px;padding:10px 12px;font-size:15px;margin:-4px 0 14px}
   .spinner{display:inline-block;width:16px;height:16px;border:3px solid #0003;border-top-color:#000;border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px;margin-right:8px}
   @keyframes sp{to{transform:rotate(360deg)}}
+  /* ---- my lessons ---- */
+  .mine-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .mine-head h1{margin:0}
+  .lcard{display:flex;gap:12px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap}
+  .lcard h3{margin:0 0 4px;font-size:18px}
+  .lcard p{margin:6px 0 0;color:var(--muted);font-size:14px}
+  .lcard .meta{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .lcard .btns{display:flex;gap:8px;flex-shrink:0}
+  .empty{text-align:center;color:var(--muted)}
   .foot{color:var(--muted);font-size:13px;text-align:center;margin-top:24px}
   .foot a{color:inherit}
   .printonly{display:none}
+  /* ---- auth modal ---- */
+  #authOverlay{position:fixed;inset:0;background:#000a;display:flex;align-items:center;justify-content:center;padding:16px;z-index:50}
+  #authBox{background:#fff;border-radius:16px;max-width:400px;width:100%;padding:22px;max-height:94vh;overflow:auto}
+  #authBox h2{margin:0 0 4px;font-size:22px}
+  #authBox .sub{margin:0 0 14px;color:var(--muted);font-size:14px}
+  #authBox input{margin-bottom:10px}
+  #authErr{display:none;background:#fdecea;border:1px solid #f3b8b3;color:var(--err);border-radius:10px;padding:8px 12px;font-size:14px;margin-bottom:10px}
+  .tabs{display:flex;gap:6px;margin-bottom:14px}
+  .tabs button{flex:1;border:2px solid var(--line);background:#fff;border-radius:10px;padding:8px;font:inherit;font-weight:600;cursor:pointer}
+  .tabs button.on{background:var(--accent);border-color:#000}
+  .tiny{font-size:13px;color:var(--muted);margin:10px 0 0;text-align:center}
+  .tiny a,.tiny button{color:inherit}
+  .xbtn{float:right;background:none;border:0;font-size:24px;line-height:1;cursor:pointer;color:var(--muted)}
   @media print{
     body{background:#fff}
-    header.top,#formWrap,.actions,.more,.foot,#msg,#mailCard{display:none!important}
+    header.top,#formWrap,#mine,.actions,.more,.foot,#msg,#saveMsg,#authOverlay{display:none!important}
     main{max-width:none;padding:0}
     .card{border:0;padding:0}
     .printonly{display:block;color:#555;font-size:12px;margin-top:16px}
@@ -93,8 +119,12 @@
   <a href="/"><img src="/graphics/Exquisite-corpse-logo.svg" alt=""></a>
   <a class="brand" href="/lessons">Art Educator <span>Hub</span></a>
   <nav>
-    <a href="/lessons">Lesson Maker</a>
-    <a href="/">Play the drawing game</a>
+    <a href="/" class="hide-sm">Play the drawing game</a>
+    <button class="link" id="navMine" type="button" hidden>My lessons</button>
+    <span class="who" id="navWho" hidden></span>
+    <button class="link" id="navLogout" type="button" hidden>Log out</button>
+    <button class="link" id="navLogin" type="button">Log in</button>
+    <button class="pill-btn" id="navSignup" type="button">Sign up free</button>
   </nav>
 </header>
 
@@ -102,6 +132,11 @@
   <div id="formWrap">
     <h1>Art lessons from the supplies you actually have.</h1>
     <p class="lede">Tell us your grade, your supplies and your time. Get a ready-to-teach lesson plan, using only what's in your room.</p>
+
+    <div class="card nudge" id="nudge">
+      <p><b>Free account:</b> save your lessons and get <span id="nudgeN">10</span> lessons a day. The same account works in the drawing game.</p>
+      <button class="btn sm" id="nudgeBtn" type="button">Create free account</button>
+    </div>
 
     <form id="form" class="card" novalidate>
       <fieldset>
@@ -140,13 +175,6 @@
         <input type="text" id="focus" placeholder="e.g. color mixing, texture, self-portraits, Black History Month" maxlength="120" autocomplete="off">
       </fieldset>
 
-      <fieldset>
-        <label class="lbl" for="email">Email <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
-        <input type="email" id="email" placeholder="you@school.org" maxlength="254" autocomplete="email">
-        <p class="help" style="margin:6px 0 0" id="emailHelp"></p>
-        <label class="consent" id="consentRow"><input type="checkbox" id="consent"> <span>Yes, send me occasional free art-teaching resources and new tools. Unsubscribe any time.</span></label>
-      </fieldset>
-
       <button class="btn primary" id="go" type="submit">✨ Create my lesson</button>
       <div id="msg" role="status" aria-live="polite"></div>
     </form>
@@ -154,27 +182,50 @@
 
   <div id="result">
     <div class="actions">
+      <button class="btn" id="saveBtn" type="button">💾 Save to My Lessons</button>
       <button class="btn" id="printBtn" type="button">🖨️ Print / Save as PDF</button>
       <button class="btn" id="copyBtn" type="button">📋 Copy as text</button>
+      <button class="btn danger" id="delBtn" type="button" hidden>🗑️ Delete</button>
       <button class="btn" id="againBtn" type="button">← Make another lesson</button>
+      <button class="btn" id="backMineBtn" type="button" hidden>← My lessons</button>
     </div>
+    <div id="saveMsg" role="status" aria-live="polite"></div>
     <article class="card lesson" id="lesson"></article>
-    <form class="card" id="mailCard" novalidate>
-      <label class="lbl" for="mailTo">📧 Email me this lesson</label>
-      <div class="row" style="align-items:stretch">
-        <div style="flex:3 1 220px"><input type="email" id="mailTo" placeholder="you@school.org" maxlength="254" autocomplete="email"></div>
-        <div style="flex:1 1 120px"><button class="btn primary" id="mailBtn" type="submit" style="font-size:16px;padding:10px 14px;height:100%">Send</button></div>
-      </div>
-      <label class="consent show" style="margin-top:10px"><input type="checkbox" id="mailJoin"> <span>Also add me to the list for free art-teaching resources and new tools. Unsubscribe any time.</span></label>
-      <div id="mailMsg" role="status" aria-live="polite" style="display:none;margin-top:10px;border-radius:10px;padding:10px 12px;font-size:15px"></div>
-    </form>
     <p class="printonly">Generated by the Art Educator Hub at ecdraw.art. AI-written; please review before teaching.</p>
     <p class="more" id="remaining"></p>
+  </div>
+
+  <div id="mine">
+    <div class="mine-head">
+      <h1>My lessons</h1>
+      <button class="btn" id="mineNew" type="button">✨ Make a new lesson</button>
+    </div>
+    <p class="help" id="mineCount" style="margin:6px 0 16px"></p>
+    <div id="mineList"></div>
   </div>
 
   <p class="foot">Lessons are written by AI. Please review them before class, especially for safety and age-fit.<br>
     Part of the <a href="/">Exquisite Corpse</a> family of creative tools.</p>
 </main>
+
+<div id="authOverlay" hidden>
+  <form id="authBox" role="dialog" aria-modal="true" aria-labelledby="authTitle" novalidate>
+    <button type="button" class="xbtn" id="authClose" aria-label="Close">&times;</button>
+    <h2 id="authTitle">Create your free account</h2>
+    <p class="sub" id="authSub">Save lessons and get more every day. One account works in the drawing game too.</p>
+    <div class="tabs" role="tablist">
+      <button type="button" id="tabSignup" class="on">Sign up</button>
+      <button type="button" id="tabLogin">Log in</button>
+    </div>
+    <div id="authErr" role="alert"></div>
+    <input type="email" id="auEmail" placeholder="Email" autocomplete="email" maxlength="254">
+    <input type="text" id="auUsername" placeholder="Username" autocomplete="username" maxlength="30">
+    <input type="password" id="auPassword" placeholder="Password (min 8 characters)" autocomplete="current-password">
+    <input type="password" id="auConfirm" placeholder="Confirm password" autocomplete="new-password">
+    <button class="btn primary" id="authSubmit" type="submit" style="font-size:17px;padding:12px 16px">Create free account</button>
+    <p class="tiny" id="authForgot" hidden>Forgot your password? <a href="/">Reset it on the game's login page</a>.</p>
+  </form>
+</div>
 
 <script>
 (function () {
@@ -184,13 +235,110 @@
     'Oil pastels', 'Chalk pastels', 'Sidewalk chalk', 'Clay or playdough', 'Cardboard', 'Magazines or newspaper',
     'Rulers', 'Erasers', 'Black Sharpies'];
   var TIMES = [20, 30, 45, 60, 90];
-  var lastLesson = null, lastLessonId = null;
+  var TOKEN_KEY = 'ec_authToken'; // same key the drawing game uses, so one login covers both
+  var cfg = { anonPerDay: 2, accountPerDay: 10, maxSaved: 50 };
+  var token = null, user = null;
+  var lastLesson = null, lastLessonId = null, savedId = null, pendingSave = false, cameFromMine = false;
 
-  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { return null; } }
+  token = store(TOKEN_KEY);
 
-  // chips
+  function call(path, opts) {
+    opts = opts || {};
+    var headers = { 'Content-Type': 'application/json' };
+    if (token) headers.Authorization = 'Bearer ' + token;
+    return fetch(path, { method: opts.method || 'GET', headers: headers, body: opts.body })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, j: j }; }, function () { return { ok: r.ok, status: r.status, j: {} }; }); });
+  }
+
+  // ---------- views ----------
+  function view(name) {
+    $('formWrap').style.display = name === 'form' ? 'block' : 'none';
+    $('result').style.display = name === 'result' ? 'block' : 'none';
+    $('mine').style.display = name === 'mine' ? 'block' : 'none';
+    if (name !== 'result') document.title = 'Art Lesson Maker for Teachers';
+    window.scrollTo(0, 0);
+  }
+
+  // ---------- auth ----------
+  function renderAuthUi() {
+    var on = !!user;
+    $('navMine').hidden = !on; $('navLogout').hidden = !on; $('navWho').hidden = !on;
+    $('navLogin').hidden = on; $('navSignup').hidden = on;
+    if (on) $('navWho').textContent = user.username;
+    $('nudge').hidden = on;
+    $('nudgeN').textContent = cfg.accountPerDay;
+  }
+  function loadMe() {
+    if (!token) { renderAuthUi(); return Promise.resolve(); }
+    return call('/api/account/me').then(function (r) {
+      if (r.ok && r.j.user) user = r.j.user;
+      else if (r.status === 401) { token = null; store(TOKEN_KEY, null); }
+      renderAuthUi();
+    }).catch(function () { renderAuthUi(); });
+  }
+
+  var authMode = 'signup';
+  function setAuthMode(mode) {
+    authMode = mode;
+    var signup = mode === 'signup';
+    $('tabSignup').classList.toggle('on', signup); $('tabLogin').classList.toggle('on', !signup);
+    $('auUsername').hidden = !signup; $('auConfirm').hidden = !signup; $('authForgot').hidden = signup;
+    $('auPassword').autocomplete = signup ? 'new-password' : 'current-password';
+    $('authTitle').textContent = signup ? 'Create your free account' : 'Welcome back';
+    $('authSub').textContent = signup ? 'Save lessons and get more every day. One account works in the drawing game too.' : 'Log in with the account you use for the drawing game.';
+    $('authSubmit').textContent = signup ? 'Create free account' : 'Log in';
+    $('authErr').style.display = 'none';
+  }
+  function openAuth(mode, why) {
+    setAuthMode(mode);
+    if (why) $('authSub').textContent = why;
+    $('authOverlay').hidden = false;
+    setTimeout(function () { $('auEmail').focus(); }, 30);
+  }
+  function closeAuth() { $('authOverlay').hidden = true; pendingSave = false; }
+  function authError(t) { var e = $('authErr'); e.textContent = t; e.style.display = 'block'; }
+
+  $('navLogin').addEventListener('click', function () { openAuth('login'); });
+  $('navSignup').addEventListener('click', function () { openAuth('signup'); });
+  $('nudgeBtn').addEventListener('click', function () { openAuth('signup'); });
+  $('tabSignup').addEventListener('click', function () { setAuthMode('signup'); });
+  $('tabLogin').addEventListener('click', function () { setAuthMode('login'); });
+  $('authClose').addEventListener('click', closeAuth);
+  $('authOverlay').addEventListener('mousedown', function (e) { if (e.target === $('authOverlay')) closeAuth(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('authOverlay').hidden) closeAuth(); });
+  $('navLogout').addEventListener('click', function () {
+    token = null; user = null; store(TOKEN_KEY, null); renderAuthUi();
+    if ($('mine').style.display === 'block') view('form');
+    else if (savedId) { savedId = null; refreshSaveUi(); }
+  });
+  $('navMine').addEventListener('click', openMine);
+
+  $('authBox').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var email = $('auEmail').value.trim(), pw = $('auPassword').value, signup = authMode === 'signup';
+    var username = $('auUsername').value.trim();
+    if (!email || !pw || (signup && !username)) return authError('Please fill in every field.');
+    if (signup) {
+      if (pw.length < 8) return authError('Password must be at least 8 characters.');
+      if (pw !== $('auConfirm').value) return authError('Passwords do not match.');
+    }
+    var btn = $('authSubmit'); btn.disabled = true; btn.textContent = signup ? 'Creating account…' : 'Logging in…';
+    call(signup ? '/api/auth/signup' : '/api/auth/login', {
+      method: 'POST', body: JSON.stringify(signup ? { email: email, username: username, password: pw } : { email: email, password: pw })
+    }).then(function (r) {
+      btn.disabled = false; btn.textContent = signup ? 'Create free account' : 'Log in';
+      if (!r.ok) return authError(r.j.error || 'Something went wrong. Please try again.');
+      token = r.j.token; user = r.j.user; store(TOKEN_KEY, token);
+      $('authBox').reset(); $('authOverlay').hidden = true; renderAuthUi();
+      var doSave = pendingSave; pendingSave = false;
+      if (doSave) saveCurrent();
+    }).catch(function () { btn.disabled = false; btn.textContent = signup ? 'Create free account' : 'Log in'; authError('Network problem. Please try again.'); });
+  });
+
+  // ---------- form ----------
   var saved = []; try { saved = JSON.parse(store('lessons_supplies') || '[]'); } catch (e) {}
-  SUPPLIES.forEach(function (s, i) {
+  SUPPLIES.forEach(function (s) {
     var l = document.createElement('label'); l.className = 'chip';
     var cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = s; cb.checked = saved.indexOf(s) !== -1;
     var sp = document.createElement('span'); sp.textContent = s;
@@ -203,35 +351,19 @@
   });
   var savedGrade = store('lessons_grade'); if (savedGrade) $('grade').value = savedGrade;
   var savedOther = store('lessons_other'); if (savedOther) $('otherSupplies').value = savedOther;
-  var savedEmail = store('lessons_email'); if (savedEmail) { $('email').value = savedEmail; }
-  syncConsent();
-  if (store('lessons_consent') === '1') $('consent').checked = true;
 
-  var cfg = { anonPerDay: 2, emailPerDay: 10 };
-  fetch('/api/lessons/config').then(function (r) { return r.json(); }).then(function (c) {
-    cfg = c;
-    $('emailHelp').textContent = 'No email needed for ' + c.anonPerDay + ' lessons a day. Add one for ' + c.emailPerDay + ' a day.';
-    if (!c.enabled) showMsg('err', 'The lesson maker is offline right now. Please check back soon.');
-    if (c.emailEnabled === false) $('mailCard').style.display = 'none';
-  }).catch(function () {});
-
-  function syncConsent() { $('consentRow').classList.toggle('show', $('email').value.trim().length > 0); }
-  $('email').addEventListener('input', syncConsent);
-
-  function showMsg(kind, text) { var m = $('msg'); m.className = kind; m.textContent = text; }
+  function showMsg(kind, text, action) {
+    var m = $('msg'); m.className = kind; m.textContent = text;
+    if (action) { m.appendChild(document.createElement('br')); var b = document.createElement('button'); b.type = 'button'; b.className = 'btn sm'; b.textContent = action.label; b.addEventListener('click', action.fn); m.appendChild(b); }
+  }
   function clearMsg() { var m = $('msg'); m.className = ''; m.textContent = ''; }
 
   function gather() {
     var supplies = Array.prototype.map.call(document.querySelectorAll('#chips input:checked'), function (i) { return i.value; });
     var other = $('otherSupplies').value.split(/[,\n;]/).map(function (s) { return s.trim(); }).filter(Boolean);
     return {
-      grade: $('grade').value,
-      supplies: supplies.concat(other),
-      minutes: Number($('minutes').value),
-      classSize: $('classSize').value ? Number($('classSize').value) : null,
-      focus: $('focus').value.trim(),
-      email: $('email').value.trim(),
-      consent: $('consent').checked,
+      grade: $('grade').value, supplies: supplies.concat(other), minutes: Number($('minutes').value),
+      classSize: $('classSize').value ? Number($('classSize').value) : null, focus: $('focus').value.trim(),
       _chips: supplies, _other: $('otherSupplies').value
     };
   }
@@ -243,42 +375,55 @@
     if (!d.grade) return showMsg('err', 'Please choose a grade.');
     if (!d.supplies.length) return showMsg('err', 'Pick at least one supply (or type what you have).');
     if (!(d.minutes >= 10 && d.minutes <= 120)) return showMsg('err', 'Class time must be between 10 and 120 minutes.');
-    if (d.email && !d.consent) return showMsg('err', 'Tick the box to get emails, or clear the email field.');
-
     store('lessons_grade', d.grade); store('lessons_supplies', JSON.stringify(d._chips)); store('lessons_other', d._other);
-    store('lessons_email', d.email); store('lessons_consent', d.consent ? '1' : '0');
 
     var btn = $('go'); btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span>Writing your lesson… (about 15 seconds)';
-    fetch('/api/lessons/generate', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ grade: d.grade, supplies: d.supplies, minutes: d.minutes, classSize: d.classSize, focus: d.focus, email: d.email, consent: d.consent })
-    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
-      .then(function (res) {
-        if (!res.ok) { showMsg('err', res.j.error || 'Something went wrong. Please try again.'); if (res.j.limit === 'anon') $('email').focus(); return; }
-        lastLessonId = res.j.lessonId;
-        show(res.j.lesson, res.j.remaining, res.j.usedEmail);
-      })
-      .catch(function () { showMsg('err', 'Network problem. Please try again.'); })
+    call('/api/lessons/generate', {
+      method: 'POST',
+      body: JSON.stringify({ grade: d.grade, supplies: d.supplies, minutes: d.minutes, classSize: d.classSize, focus: d.focus })
+    }).then(function (r) {
+      if (!r.ok) {
+        var act = r.j.limit === 'anon' ? { label: 'Create free account', fn: function () { openAuth('signup'); } } : null;
+        return showMsg('err', r.j.error || 'Something went wrong. Please try again.', act);
+      }
+      lastLessonId = r.j.lessonId; savedId = null; cameFromMine = false;
+      show(r.j.lesson, { remaining: r.j.remaining, loggedIn: !!user });
+    }).catch(function () { showMsg('err', 'Network problem. Please try again.'); })
       .then(function () { btn.disabled = false; btn.textContent = '✨ Create my lesson'; });
   });
 
-  // ---- render (textContent everywhere: model output is never injected as HTML) ----
+  // ---------- render (textContent everywhere: model output is never injected as HTML) ----------
   function el(tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
   function listOf(tag, items) { var l = el(tag); items.forEach(function (t) { l.appendChild(el('li', null, t)); }); return l; }
   function section(root, title, node) { if (!node) return; root.appendChild(el('h3', null, title)); root.appendChild(node); }
+  function gradeLabel(g) { return g === 'K' ? 'Kindergarten' : 'Grade ' + g; }
 
-  function show(L, remaining, usedEmail) {
+  function refreshSaveUi() {
+    var viewing = cameFromMine && savedId;
+    $('saveBtn').hidden = !!viewing; $('delBtn').hidden = !viewing;
+    $('againBtn').hidden = !!viewing; $('backMineBtn').hidden = !viewing;
+    var sb = $('saveBtn');
+    if (savedId && !viewing) { sb.textContent = '✓ Saved'; sb.disabled = true; }
+    else { sb.textContent = '💾 Save to My Lessons'; sb.disabled = false; }
+  }
+  function saveNote(ok, text, linkLabel, linkFn) {
+    var m = $('saveMsg'); m.style.display = text ? 'block' : 'none'; m.textContent = text || '';
+    m.style.background = ok ? '#e8f6e8' : '#fdecea'; m.style.border = '1px solid ' + (ok ? '#a8d5a8' : '#f3b8b3'); m.style.color = ok ? '#1d4d1d' : 'var(--err)';
+    if (text && linkLabel) { m.appendChild(document.createTextNode(' ')); var a = el('button', 'btn sm', linkLabel); a.type = 'button'; a.addEventListener('click', linkFn); m.appendChild(a); }
+  }
+
+  function show(L, o) {
     lastLesson = L;
     var root = $('lesson'); root.textContent = '';
     root.appendChild(el('h2', null, L.title));
     var meta = el('div', 'meta');
-    meta.appendChild(el('span', 'pill', (L.grade === 'K' ? 'Kindergarten' : 'Grade ' + L.grade)));
+    meta.appendChild(el('span', 'pill', gradeLabel(L.grade)));
     meta.appendChild(el('span', 'pill', L.minutes + ' minutes'));
     if (L.artConcept) meta.appendChild(el('span', 'pill', L.artConcept));
     root.appendChild(meta);
     if (L.summary) root.appendChild(el('p', null, L.summary));
-    if (L.objective) { var o = el('p'); o.appendChild(el('b', null, 'Objective: ')); o.appendChild(document.createTextNode(L.objective.replace(/^objective:\s*/i, ''))); root.appendChild(o); }
+    if (L.objective) { var ob = el('p'); ob.appendChild(el('b', null, 'Objective: ')); ob.appendChild(document.createTextNode(L.objective.replace(/^objective:\s*/i, ''))); root.appendChild(ob); }
 
     section(root, 'Materials', listOf('ul', L.materials.map(function (m) { return m.item; })));
     if (L.vocabulary.length) {
@@ -305,45 +450,82 @@
     if (L.assessment.length) section(root, 'Assessment', listOf('ul', L.assessment));
     if (L.safetyNotes.length) { var sf = el('div', 'safety'); sf.appendChild(el('b', null, 'Safety notes')); sf.appendChild(listOf('ul', L.safetyNotes)); root.appendChild(sf); }
 
-    $('remaining').textContent = remaining > 0
-      ? 'You have ' + remaining + ' free lesson' + (remaining === 1 ? '' : 's') + ' left today.'
-      : (usedEmail ? 'That was your last free lesson for today. See you tomorrow!' : 'Add your email next time to get ' + cfg.emailPerDay + ' free lessons a day.');
-    $('mailTo').value = $('email').value.trim() || store('lessons_email') || '';
-    $('mailJoin').checked = store('lessons_consent') === '1';
-    $('mailMsg').style.display = 'none'; $('mailBtn').disabled = false; $('mailBtn').textContent = 'Send';
-    $('formWrap').style.display = 'none'; $('result').style.display = 'block';
+    var rem = $('remaining');
+    if (o && typeof o.remaining === 'number') {
+      rem.textContent = o.remaining > 0
+        ? 'You have ' + o.remaining + ' free lesson' + (o.remaining === 1 ? '' : 's') + ' left today.'
+        : (o.loggedIn ? 'That was your last free lesson for today. See you tomorrow!' : 'Create a free account to get ' + cfg.accountPerDay + ' lessons a day.');
+    } else rem.textContent = '';
+    saveNote(true, '');
+    refreshSaveUi();
+    view('result');
     document.title = L.title + ' · Art Lesson Maker';
-    window.scrollTo(0, 0);
   }
 
-  $('againBtn').addEventListener('click', function () {
-    $('result').style.display = 'none'; $('formWrap').style.display = 'block'; document.title = 'Art Lesson Maker for Teachers';
-    window.scrollTo(0, 0);
-  });
+  // ---------- save ----------
+  function saveCurrent() {
+    if (!lastLessonId || savedId) return;
+    if (!token || !user) {
+      pendingSave = true;
+      return openAuth('signup', 'Create a free account to save this lesson. It takes a few seconds.');
+    }
+    var sb = $('saveBtn'); sb.disabled = true; sb.textContent = 'Saving…';
+    call('/api/lessons/saved', { method: 'POST', body: JSON.stringify({ lessonId: lastLessonId }) }).then(function (r) {
+      if (r.ok) { savedId = r.j.id; refreshSaveUi(); return saveNote(true, 'Saved to your account.', 'View My Lessons', openMine); }
+      if (r.status === 401) { token = null; user = null; store(TOKEN_KEY, null); renderAuthUi(); pendingSave = true; refreshSaveUi(); return openAuth('login', 'Your session expired. Log in to save this lesson.'); }
+      refreshSaveUi(); saveNote(false, r.j.error || 'Could not save. Please try again.');
+    }).catch(function () { refreshSaveUi(); saveNote(false, 'Network problem. Please try again.'); });
+  }
+  $('saveBtn').addEventListener('click', saveCurrent);
+
+  // ---------- my lessons ----------
+  var mineCache = [];
+  function openMine() {
+    if (!user) return openAuth('login', 'Log in to see your saved lessons.');
+    view('mine');
+    $('mineList').textContent = ''; $('mineCount').textContent = 'Loading…';
+    call('/api/lessons/saved').then(function (r) {
+      if (r.status === 401) { token = null; user = null; store(TOKEN_KEY, null); renderAuthUi(); view('form'); return openAuth('login', 'Your session expired. Please log in again.'); }
+      if (!r.ok) { $('mineCount').textContent = r.j.error || 'Could not load your lessons.'; return; }
+      mineCache = r.j.lessons || []; renderMine();
+    }).catch(function () { $('mineCount').textContent = 'Network problem. Please try again.'; });
+  }
+  function renderMine() {
+    var list = $('mineList'); list.textContent = '';
+    $('mineCount').textContent = mineCache.length ? mineCache.length + ' of ' + cfg.maxSaved + ' saved' : '';
+    if (!mineCache.length) {
+      var c = el('div', 'card empty'); c.appendChild(el('p', null, 'No saved lessons yet. Make one and tap “Save to My Lessons”.'));
+      var b = el('button', 'btn primary', '✨ Make my first lesson'); b.type = 'button'; b.style.maxWidth = '320px'; b.addEventListener('click', function () { view('form'); });
+      c.appendChild(b); list.appendChild(c); return;
+    }
+    mineCache.forEach(function (e) {
+      var L = e.lesson, card = el('div', 'card lcard'), left = el('div'); left.style.flex = '1 1 260px';
+      left.appendChild(el('h3', null, L.title));
+      var meta = el('div', 'meta'); meta.appendChild(el('span', 'pill', gradeLabel(L.grade))); meta.appendChild(el('span', 'pill', L.minutes + ' min'));
+      meta.appendChild(el('span', null, new Date(e.savedAt).toLocaleDateString())); meta.lastChild.style.cssText = 'font-size:13px;color:var(--muted)';
+      left.appendChild(meta); if (L.summary) left.appendChild(el('p', null, L.summary));
+      var btns = el('div', 'btns');
+      var open = el('button', 'btn sm', 'Open'); open.type = 'button'; open.addEventListener('click', function () { openSaved(e); });
+      var del = el('button', 'btn sm danger', 'Delete'); del.type = 'button'; del.addEventListener('click', function () { deleteSaved(e.id, del); });
+      btns.appendChild(open); btns.appendChild(del); card.appendChild(left); card.appendChild(btns); list.appendChild(card);
+    });
+  }
+  function openSaved(e) { cameFromMine = true; savedId = e.id; lastLessonId = null; show(e.lesson, null); }
+  function deleteSaved(id, btn) {
+    if (!window.confirm('Delete this saved lesson? This can’t be undone.')) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
+    return call('/api/lessons/saved/' + encodeURIComponent(id), { method: 'DELETE' }).then(function (r) {
+      if (!r.ok && r.status !== 404) { if (btn) { btn.disabled = false; btn.textContent = 'Delete'; } return window.alert(r.j.error || 'Could not delete. Please try again.'); }
+      mineCache = mineCache.filter(function (x) { return x.id !== id; });
+      cameFromMine = false; savedId = null; view('mine'); renderMine();
+    });
+  }
+  $('delBtn').addEventListener('click', function () { if (savedId) deleteSaved(savedId); });
+  $('backMineBtn').addEventListener('click', function () { cameFromMine = false; view('mine'); renderMine(); });
+  $('mineNew').addEventListener('click', function () { view('form'); });
+
+  $('againBtn').addEventListener('click', function () { view('form'); });
   $('printBtn').addEventListener('click', function () { window.print(); });
-
-  function mailNote(ok, text) {
-    var m = $('mailMsg'); m.style.display = 'block'; m.textContent = text;
-    m.style.background = ok ? '#e8f6e8' : '#fdecea'; m.style.border = '1px solid ' + (ok ? '#a8d5a8' : '#f3b8b3'); m.style.color = ok ? '#1d4d1d' : 'var(--err)';
-  }
-  $('mailCard').addEventListener('submit', function (e) {
-    e.preventDefault();
-    var to = $('mailTo').value.trim();
-    if (!to) return mailNote(false, 'Enter your email address.');
-    var btn = $('mailBtn'); btn.disabled = true; btn.textContent = 'Sending…';
-    fetch('/api/lessons/email', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lessonId: lastLessonId, email: to, joinList: $('mailJoin').checked })
-    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
-      .then(function (res) {
-        if (!res.ok) { btn.disabled = false; btn.textContent = 'Send'; return mailNote(false, res.j.error || 'Could not send. Please try again.'); }
-        store('lessons_email', to);
-        if (res.j.joined) store('lessons_consent', '1');
-        btn.textContent = 'Sent ✓';
-        mailNote(true, 'Sent to ' + to + '. Check your inbox (and spam folder, just in case).' + (res.j.joined ? ' You’re on the list too.' : ''));
-      })
-      .catch(function () { btn.disabled = false; btn.textContent = 'Send'; mailNote(false, 'Network problem. Please try again.'); });
-  });
   $('copyBtn').addEventListener('click', function () {
     if (!lastLesson) return; var L = lastLesson, t = [];
     t.push(L.title, '', L.summary, '', 'Objective: ' + L.objective, '', 'MATERIALS');
@@ -360,6 +542,15 @@
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
     else done(false);
   });
+
+  // ---------- boot ----------
+  setAuthMode('signup');
+  renderAuthUi();
+  loadMe();
+  fetch('/api/lessons/config').then(function (r) { return r.json(); }).then(function (c) {
+    cfg = c; renderAuthUi();
+    if (!c.enabled) showMsg('err', 'The lesson maker is offline right now. Please check back soon.');
+  }).catch(function () {});
 })();
 </script>
 </body>
